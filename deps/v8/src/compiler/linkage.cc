@@ -6,12 +6,12 @@
 
 #include "src/assembler-inl.h"
 #include "src/code-stubs.h"
-#include "src/compilation-info.h"
 #include "src/compiler/common-operator.h"
 #include "src/compiler/frame.h"
 #include "src/compiler/node.h"
 #include "src/compiler/osr.h"
 #include "src/compiler/pipeline.h"
+#include "src/optimized-compilation-info.h"
 
 namespace v8 {
 namespace internal {
@@ -135,7 +135,8 @@ int CallDescriptor::CalculateFixedFrameSize() const {
   UNREACHABLE();
 }
 
-CallDescriptor* Linkage::ComputeIncoming(Zone* zone, CompilationInfo* info) {
+CallDescriptor* Linkage::ComputeIncoming(Zone* zone,
+                                         OptimizedCompilationInfo* info) {
   DCHECK(!info->IsStub());
   if (!info->closure().is_null()) {
     // If we are compiling a JS function, use a JS call descriptor,
@@ -179,10 +180,8 @@ bool Linkage::NeedsFrameStateInput(Runtime::FunctionId function) {
       return false;
 
     // Some inline intrinsics are also safe to call without a FrameState.
-    case Runtime::kInlineClassOf:
     case Runtime::kInlineCreateIterResultObject:
     case Runtime::kInlineGeneratorClose:
-    case Runtime::kInlineGeneratorGetContext:
     case Runtime::kInlineGeneratorGetInputOrDebugPos:
     case Runtime::kInlineGeneratorGetResumeMode:
     case Runtime::kInlineCreateJSGeneratorObject:
@@ -462,6 +461,8 @@ CallDescriptor* Linkage::GetBytecodeDispatchCallDescriptor(
   // The target for interpreter dispatches is a code entry address.
   MachineType target_type = MachineType::Pointer();
   LinkageLocation target_loc = LinkageLocation::ForAnyRegister(target_type);
+  const CallDescriptor::Flags kFlags =
+      CallDescriptor::kCanUseRoots | CallDescriptor::kFixedTargetRegister;
   return new (zone) CallDescriptor(  // --
       CallDescriptor::kCallAddress,  // kind
       target_type,                   // target MachineType
@@ -471,7 +472,7 @@ CallDescriptor* Linkage::GetBytecodeDispatchCallDescriptor(
       Operator::kNoProperties,       // properties
       kNoCalleeSaved,                // callee-saved registers
       kNoCalleeSaved,                // callee-saved fp
-      CallDescriptor::kCanUseRoots,  // flags
+      kFlags,                        // flags
       descriptor.DebugName(isolate));
 }
 

@@ -328,6 +328,9 @@ inline WasmOpcode LoadStoreOpcodeOf(MachineType type, bool store) {
       static_cast<byte>(bit_cast<uint64_t>(static_cast<double>(val)) >> 40), \
       static_cast<byte>(bit_cast<uint64_t>(static_cast<double>(val)) >> 48), \
       static_cast<byte>(bit_cast<uint64_t>(static_cast<double>(val)) >> 56)
+
+#define WASM_REF_NULL kExprRefNull
+
 #define WASM_GET_LOCAL(index) kExprGetLocal, static_cast<byte>(index)
 #define WASM_SET_LOCAL(index, val) val, kExprSetLocal, static_cast<byte>(index)
 #define WASM_TEE_LOCAL(index, val) val, kExprTeeLocal, static_cast<byte>(index)
@@ -564,6 +567,10 @@ inline WasmOpcode LoadStoreOpcodeOf(MachineType type, bool store) {
 #define WASM_I32_UCONVERT_SAT_F32(x) x, WASM_NUMERIC_OP(kExprI32UConvertSatF32)
 #define WASM_I32_SCONVERT_SAT_F64(x) x, WASM_NUMERIC_OP(kExprI32SConvertSatF64)
 #define WASM_I32_UCONVERT_SAT_F64(x) x, WASM_NUMERIC_OP(kExprI32UConvertSatF64)
+#define WASM_I64_SCONVERT_SAT_F32(x) x, WASM_NUMERIC_OP(kExprI64SConvertSatF32)
+#define WASM_I64_UCONVERT_SAT_F32(x) x, WASM_NUMERIC_OP(kExprI64UConvertSatF32)
+#define WASM_I64_SCONVERT_SAT_F64(x) x, WASM_NUMERIC_OP(kExprI64SConvertSatF64)
+#define WASM_I64_UCONVERT_SAT_F64(x) x, WASM_NUMERIC_OP(kExprI64UConvertSatF64)
 
 //------------------------------------------------------------------------------
 // Memory Operations.
@@ -615,5 +622,14 @@ inline WasmOpcode LoadStoreOpcodeOf(MachineType type, bool store) {
 #define WASM_ATOMICS_STORE_OP(op, x, y, representation) \
   x, y, WASM_ATOMICS_OP(op),                            \
       static_cast<byte>(ElementSizeLog2Of(representation)), ZERO_OFFSET
+
+//------------------------------------------------------------------------------
+// Sign Externsion Operations.
+//------------------------------------------------------------------------------
+#define WASM_I32_SIGN_EXT_I8(x) x, kExprI32SExtendI8
+#define WASM_I32_SIGN_EXT_I16(x) x, kExprI32SExtendI16
+#define WASM_I64_SIGN_EXT_I8(x) x, kExprI64SExtendI8
+#define WASM_I64_SIGN_EXT_I16(x) x, kExprI64SExtendI16
+#define WASM_I64_SIGN_EXT_I32(x) x, kExprI64SExtendI32
 
 #endif  // V8_WASM_MACRO_GEN_H_

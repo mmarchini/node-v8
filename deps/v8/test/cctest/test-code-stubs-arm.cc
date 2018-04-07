@@ -54,7 +54,7 @@ ConvertDToIFunc MakeConvertDToIFuncTrampoline(Isolate* isolate,
 
   DoubleToIStub stub(isolate, destination_reg);
 
-  byte* start = stub.GetCode()->instruction_start();
+  byte* start = stub.GetCode()->raw_instruction_start();
 
   // Save callee save registers.
   __ Push(r7, r6, r5, r4);
@@ -116,7 +116,7 @@ ConvertDToIFunc MakeConvertDToIFuncTrampoline(Isolate* isolate,
   CodeDesc desc;
   masm.GetCode(isolate, &desc);
   MakeAssemblerBufferExecutable(buffer, allocated);
-  Assembler::FlushICache(isolate, buffer, allocated);
+  Assembler::FlushICache(buffer, allocated);
   return (reinterpret_cast<ConvertDToIFunc>(
       reinterpret_cast<intptr_t>(buffer)));
 }

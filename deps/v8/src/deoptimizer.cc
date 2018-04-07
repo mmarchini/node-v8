@@ -100,7 +100,9 @@ DeoptimizedFrameInfo* Deoptimizer::DebuggerInspectableFrame(
   for (auto it = translated_values.begin(); it != translated_values.end();
        it++) {
     if (it->kind() == TranslatedFrame::kInterpretedFunction ||
-        it->kind() == TranslatedFrame::kJavaScriptBuiltinContinuation) {
+        it->kind() == TranslatedFrame::kJavaScriptBuiltinContinuation ||
+        it->kind() ==
+            TranslatedFrame::kJavaScriptBuiltinContinuationWithCatch) {
       if (counter == 0) {
         frame_it = it;
         break;
@@ -154,7 +156,7 @@ class ActivationsFinder : public ThreadVisitor {
           int trampoline_pc = safepoint.trampoline_pc();
           DCHECK_IMPLIES(code == topmost_, safe_to_deopt_);
           // Replace the current pc on the stack with the trampoline.
-          it.frame()->set_pc(code->instruction_start() + trampoline_pc);
+          it.frame()->set_pc(code->raw_instruction_start() + trampoline_pc);
         }
       }
     }
@@ -276,6 +278,7 @@ void Deoptimizer::DeoptimizeAll(Isolate* isolate) {
     CodeTracer::Scope scope(isolate->GetCodeTracer());
     PrintF(scope.file(), "[deoptimize all code in all contexts]\n");
   }
+  isolate->AbortConcurrentOptimization(BlockingBehavior::kBlock);
   DisallowHeapAllocation no_allocation;
   // For all contexts, mark all code, then deoptimize.
   Object* context = isolate->heap()->native_contexts_list();
@@ -497,7 +500,7 @@ Address Deoptimizer::GetDeoptimizationEntry(Isolate* isolate, int id,
   CHECK_LE(type, kLastBailoutType);
   CHECK_NOT_NULL(data->deopt_entry_code_[type]);
   Code* code = data->deopt_entry_code_[type];
-  return code->instruction_start() + (id * table_entry_size_);
+  return code->raw_instruction_start() + (id * table_entry_size_);
 }
 
 
@@ -508,7 +511,7 @@ int Deoptimizer::GetDeoptimizationId(Isolate* isolate,
   CHECK_LE(type, kLastBailoutType);
   Code* code = data->deopt_entry_code_[type];
   if (code == nullptr) return kNotDeoptimizationEntry;
-  Address start = code->instruction_start();
+  Address start = code->raw_instruction_start();
   if (addr < start ||
       addr >= start + (kMaxNumberOfEntries * table_entry_size_)) {
     return kNotDeoptimizationEntry;
@@ -545,10 +548,11 @@ int LookupCatchHandler(TranslatedFrame* translated_frame, int* data_out) {
   switch (translated_frame->kind()) {
     case TranslatedFrame::kInterpretedFunction: {
       int bytecode_offset = translated_frame->node_id().ToInt();
-      BytecodeArray* bytecode =
-          translated_frame->raw_shared_info()->bytecode_array();
-      HandlerTable* table = HandlerTable::cast(bytecode->handler_table());
-      return table->LookupRange(bytecode_offset, data_out, nullptr);
+      HandlerTable table(translated_frame->raw_shared_info()->bytecode_array());
+      return table.LookupRange(bytecode_offset, data_out, nullptr);
+    }
+    case TranslatedFrame::kJavaScriptBuiltinContinuationWithCatch: {
+      return 0;
     }
     default:
       break;
@@ -654,10 +658,11 @@ void Deoptimizer::DoComputeOutputFrames() {
   for (size_t i = 0; i < count; ++i, ++frame_index) {
     // Read the ast node id, function, and frame height for this output frame.
     TranslatedFrame* translated_frame = &(translated_state_.frames()[i]);
+    bool handle_exception = deoptimizing_throw_ && i == count - 1;
     switch (translated_frame->kind()) {
       case TranslatedFrame::kInterpretedFunction:
         DoComputeInterpretedFrame(translated_frame, frame_index,
-                                  deoptimizing_throw_ && i == count - 1);
+                                  handle_exception);
         jsframe_count_++;
         break;
       case TranslatedFrame::kArgumentsAdaptor:
@@ -667,10 +672,19 @@ void Deoptimizer::DoComputeOutputFrames() {
         DoComputeConstructStubFrame(translated_frame, frame_index);
         break;
       case TranslatedFrame::kBuiltinContinuation:
-        DoComputeBuiltinContinuation(translated_frame, frame_index, false);
+        DoComputeBuiltinContinuation(translated_frame, frame_index,
+                                     BuiltinContinuationMode::STUB);
         break;
       case TranslatedFrame::kJavaScriptBuiltinContinuation:
-        DoComputeBuiltinContinuation(translated_frame, frame_index, true);
+        DoComputeBuiltinContinuation(translated_frame, frame_index,
+                                     BuiltinContinuationMode::JAVASCRIPT);
+        break;
+      case TranslatedFrame::kJavaScriptBuiltinContinuationWithCatch:
+        DoComputeBuiltinContinuation(
+            translated_frame, frame_index,
+            handle_exception
+                ? BuiltinContinuationMode::JAVASCRIPT_HANDLE_EXCEPTION
+                : BuiltinContinuationMode::JAVASCRIPT_WITH_CATCH);
         break;
       case TranslatedFrame::kInvalid:
         FATAL("invalid frame");
@@ -956,7 +970,8 @@ void Deoptimizer::DoComputeInterpretedFrame(TranslatedFrame* translated_frame,
       (!is_topmost || (bailout_type_ == LAZY)) && !goto_catch_handler
           ? builtins->builtin(Builtins::kInterpreterEnterBytecodeAdvance)
           : builtins->builtin(Builtins::kInterpreterEnterBytecodeDispatch);
-  output_frame->SetPc(reinterpret_cast<intptr_t>(dispatch_builtin->entry()));
+  output_frame->SetPc(
+      reinterpret_cast<intptr_t>(dispatch_builtin->InstructionStart()));
 
   // Update constant pool.
   if (FLAG_enable_embedded_constant_pool) {
@@ -980,7 +995,7 @@ void Deoptimizer::DoComputeInterpretedFrame(TranslatedFrame* translated_frame,
     // Set the continuation for the topmost frame.
     Code* continuation = builtins->builtin(Builtins::kNotifyDeoptimized);
     output_frame->SetContinuation(
-        reinterpret_cast<intptr_t>(continuation->entry()));
+        reinterpret_cast<intptr_t>(continuation->InstructionStart()));
   }
 }
 
@@ -1114,7 +1129,7 @@ void Deoptimizer::DoComputeArgumentsAdaptorFrame(
   Code* adaptor_trampoline =
       builtins->builtin(Builtins::kArgumentsAdaptorTrampoline);
   intptr_t pc_value = reinterpret_cast<intptr_t>(
-      adaptor_trampoline->instruction_start() +
+      adaptor_trampoline->InstructionStart() +
       isolate_->heap()->arguments_adaptor_deopt_pc_offset()->value());
   output_frame->SetPc(pc_value);
   if (FLAG_enable_embedded_constant_pool) {
@@ -1303,7 +1318,7 @@ void Deoptimizer::DoComputeConstructStubFrame(TranslatedFrame* translated_frame,
 
   // Compute this frame's PC.
   DCHECK(bailout_id.IsValidForConstructStub());
-  Address start = construct_stub->instruction_start();
+  Address start = construct_stub->InstructionStart();
   int pc_offset =
       bailout_id == BailoutId::ConstructStubCreate()
           ? isolate_->heap()->construct_stub_create_deopt_pc_offset()->value()
@@ -1338,8 +1353,65 @@ void Deoptimizer::DoComputeConstructStubFrame(TranslatedFrame* translated_frame,
     DCHECK_EQ(LAZY, bailout_type_);
     Code* continuation = builtins->builtin(Builtins::kNotifyDeoptimized);
     output_frame->SetContinuation(
-        reinterpret_cast<intptr_t>(continuation->entry()));
+        reinterpret_cast<intptr_t>(continuation->InstructionStart()));
   }
+}
+
+bool Deoptimizer::BuiltinContinuationModeIsJavaScript(
+    BuiltinContinuationMode mode) {
+  switch (mode) {
+    case BuiltinContinuationMode::STUB:
+      return false;
+    case BuiltinContinuationMode::JAVASCRIPT:
+    case BuiltinContinuationMode::JAVASCRIPT_WITH_CATCH:
+    case BuiltinContinuationMode::JAVASCRIPT_HANDLE_EXCEPTION:
+      return true;
+  }
+  UNREACHABLE();
+}
+
+bool Deoptimizer::BuiltinContinuationModeIsWithCatch(
+    BuiltinContinuationMode mode) {
+  switch (mode) {
+    case BuiltinContinuationMode::STUB:
+    case BuiltinContinuationMode::JAVASCRIPT:
+      return false;
+    case BuiltinContinuationMode::JAVASCRIPT_WITH_CATCH:
+    case BuiltinContinuationMode::JAVASCRIPT_HANDLE_EXCEPTION:
+      return true;
+  }
+  UNREACHABLE();
+}
+
+StackFrame::Type Deoptimizer::BuiltinContinuationModeToFrameType(
+    BuiltinContinuationMode mode) {
+  switch (mode) {
+    case BuiltinContinuationMode::STUB:
+      return StackFrame::BUILTIN_CONTINUATION;
+    case BuiltinContinuationMode::JAVASCRIPT:
+      return StackFrame::JAVA_SCRIPT_BUILTIN_CONTINUATION;
+    case BuiltinContinuationMode::JAVASCRIPT_WITH_CATCH:
+      return StackFrame::JAVA_SCRIPT_BUILTIN_CONTINUATION_WITH_CATCH;
+    case BuiltinContinuationMode::JAVASCRIPT_HANDLE_EXCEPTION:
+      return StackFrame::JAVA_SCRIPT_BUILTIN_CONTINUATION_WITH_CATCH;
+  }
+  UNREACHABLE();
+}
+
+Builtins::Name Deoptimizer::TrampolineForBuiltinContinuation(
+    BuiltinContinuationMode mode, bool must_handle_result) {
+  switch (mode) {
+    case BuiltinContinuationMode::STUB:
+      return must_handle_result ? Builtins::kContinueToCodeStubBuiltinWithResult
+                                : Builtins::kContinueToCodeStubBuiltin;
+    case BuiltinContinuationMode::JAVASCRIPT:
+    case BuiltinContinuationMode::JAVASCRIPT_WITH_CATCH:
+    case BuiltinContinuationMode::JAVASCRIPT_HANDLE_EXCEPTION:
+      return must_handle_result
+                 ? Builtins::kContinueToJavaScriptBuiltinWithResult
+                 : Builtins::kContinueToJavaScriptBuiltin;
+  }
+  UNREACHABLE();
 }
 
 // BuiltinContinuationFrames capture the machine state that is expected as input
@@ -1363,77 +1435,102 @@ void Deoptimizer::DoComputeConstructStubFrame(TranslatedFrame* translated_frame,
 //                TO
 //    |          ....           |
 //    +-------------------------+
+//    | arg padding (arch dept) |<- at most 1*kPointerSize
+//    +-------------------------+
 //    |     builtin param 0     |<- FrameState input value n becomes
 //    +-------------------------+
 //    |           ...           |
 //    +-------------------------+
 //    |     builtin param m     |<- FrameState input value n+m-1, or in
-//    +-------------------------+   the LAZY case, return LAZY result value
+//    +-----needs-alignment-----+   the LAZY case, return LAZY result value
 //    | ContinueToBuiltin entry |
 //    +-------------------------+
 // |  |    saved frame (FP)     |
-// |  +=========================+<- fpreg
+// |  +=====needs=alignment=====+<- fpreg
 // |  |constant pool (if ool_cp)|
 // v  +-------------------------+
 //    |BUILTIN_CONTINUATION mark|
 //    +-------------------------+
-//    |  JS Builtin code object |
+//    |  JSFunction (or zero)   |<- only if JavaScript builtin
+//    +-------------------------+
+//    |  frame height above FP  |
+//    +-------------------------+
+//    |     builtin address     |
 //    +-------------------------+
 //    | builtin input GPR reg0  |<- populated from deopt FrameState using
 //    +-------------------------+   the builtin's CallInterfaceDescriptor
 //    |          ...            |   to map a FrameState's 0..n-1 inputs to
 //    +-------------------------+   the builtin's n input register params.
 //    | builtin input GPR regn  |
-//    |-------------------------|<- spreg
+//    +-------------------------+
+//    | reg padding (arch dept) |
+//    +-----needs--alignment----+
+//    | res padding (arch dept) |<- only if {is_topmost}; result is pop'd by
+//    +-------------------------+<- kNotifyDeopt ASM stub and moved to acc
+//    |      result  value      |<- reg, as ContinueToBuiltin stub expects.
+//    +-----needs-alignment-----+<- spreg
 //
 void Deoptimizer::DoComputeBuiltinContinuation(
     TranslatedFrame* translated_frame, int frame_index,
-    bool java_script_builtin) {
+    BuiltinContinuationMode mode) {
   TranslatedFrame::iterator value_iterator = translated_frame->begin();
   int input_index = 0;
 
   // The output frame must have room for all of the parameters that need to be
   // passed to the builtin continuation.
-  int height_in_words = translated_frame->height();
+  const int height_in_words = translated_frame->height();
 
   BailoutId bailout_id = translated_frame->node_id();
   Builtins::Name builtin_name = Builtins::GetBuiltinFromBailoutId(bailout_id);
-  DCHECK(!Builtins::IsLazy(builtin_name));
+  CHECK(!Builtins::IsLazy(builtin_name));
   Code* builtin = isolate()->builtins()->builtin(builtin_name);
   Callable continuation_callable =
       Builtins::CallableFor(isolate(), builtin_name);
   CallInterfaceDescriptor continuation_descriptor =
       continuation_callable.descriptor();
 
-  bool is_bottommost = (0 == frame_index);
-  bool is_topmost = (output_count_ - 1 == frame_index);
-  bool must_handle_result = !is_topmost || bailout_type_ == LAZY;
+  const bool is_bottommost = (0 == frame_index);
+  const bool is_topmost = (output_count_ - 1 == frame_index);
+  const bool must_handle_result = !is_topmost || bailout_type_ == LAZY;
 
   const RegisterConfiguration* config(RegisterConfiguration::Default());
-  int allocatable_register_count = config->num_allocatable_general_registers();
-  int padding_slot_count = BuiltinContinuationFrameConstants::PaddingSlotCount(
-      allocatable_register_count);
+  const int allocatable_register_count =
+      config->num_allocatable_general_registers();
+  const int padding_slot_count =
+      BuiltinContinuationFrameConstants::PaddingSlotCount(
+          allocatable_register_count);
 
-  int register_parameter_count =
+  const int register_parameter_count =
       continuation_descriptor.GetRegisterParameterCount();
   // Make sure to account for the context by removing it from the register
   // parameter count.
-  int stack_param_count = height_in_words - register_parameter_count - 1;
-  if (must_handle_result) stack_param_count++;
-  unsigned output_frame_size =
-      kPointerSize * (stack_param_count + allocatable_register_count +
-                      padding_slot_count) +
-      BuiltinContinuationFrameConstants::kFixedFrameSize;
+  const int translated_stack_parameters =
+      height_in_words - register_parameter_count - 1;
+  const int stack_param_count =
+      translated_stack_parameters + (must_handle_result ? 1 : 0) +
+      (BuiltinContinuationModeIsWithCatch(mode) ? 1 : 0);
+  const int stack_param_pad_count =
+      ShouldPadArguments(stack_param_count) ? 1 : 0;
 
   // If the builtins frame appears to be topmost we should ensure that the
   // value of result register is preserved during continuation execution.
   // We do this here by "pushing" the result of callback function to the
   // top of the reconstructed stack and popping it in
   // {Builtins::kNotifyDeoptimized}.
-  if (is_topmost) {
-    output_frame_size += kPointerSize;
-    if (PadTopOfStackRegister()) output_frame_size += kPointerSize;
-  }
+  const int push_result_count =
+      is_topmost ? (PadTopOfStackRegister() ? 2 : 1) : 0;
+
+  const unsigned output_frame_size =
+      kPointerSize * (stack_param_count + stack_param_pad_count +
+                      allocatable_register_count + padding_slot_count +
+                      push_result_count) +
+      BuiltinContinuationFrameConstants::kFixedFrameSize;
+
+  const unsigned output_frame_size_above_fp =
+      kPointerSize * (allocatable_register_count + padding_slot_count +
+                      push_result_count) +
+      (BuiltinContinuationFrameConstants::kFixedFrameSize -
+       BuiltinContinuationFrameConstants::kFixedFrameSizeAboveFp);
 
   // Validate types of parameters. They must all be tagged except for argc for
   // JS builtins.
@@ -1451,7 +1548,7 @@ void Deoptimizer::DoComputeBuiltinContinuation(
       CHECK(IsAnyTagged(type.representation()));
     }
   }
-  CHECK_EQ(java_script_builtin, has_argc);
+  CHECK_EQ(BuiltinContinuationModeIsJavaScript(mode), has_argc);
 
   if (trace_scope_ != nullptr) {
     PrintF(trace_scope_->file(),
@@ -1462,10 +1559,6 @@ void Deoptimizer::DoComputeBuiltinContinuation(
            stack_param_count);
   }
 
-  int translated_stack_parameters =
-      must_handle_result ? stack_param_count - 1 : stack_param_count;
-
-  if (ShouldPadArguments(stack_param_count)) output_frame_size += kPointerSize;
   FrameDescription* output_frame = new (output_frame_size)
       FrameDescription(output_frame_size, stack_param_count);
   output_[frame_index] = output_frame;
@@ -1509,6 +1602,27 @@ void Deoptimizer::DoComputeBuiltinContinuation(
     output_frame_offset -= kPointerSize;
     WriteTranslatedValueToOutput(&value_iterator, &input_index, frame_index,
                                  output_frame_offset);
+  }
+
+  switch (mode) {
+    case BuiltinContinuationMode::STUB:
+      break;
+    case BuiltinContinuationMode::JAVASCRIPT:
+      break;
+    case BuiltinContinuationMode::JAVASCRIPT_WITH_CATCH: {
+      output_frame_offset -= kPointerSize;
+      WriteValueToOutput(isolate()->heap()->the_hole_value(), input_index,
+                         frame_index, output_frame_offset,
+                         "placeholder for exception on lazy deopt ");
+    } break;
+    case BuiltinContinuationMode::JAVASCRIPT_HANDLE_EXCEPTION: {
+      output_frame_offset -= kPointerSize;
+      intptr_t accumulator_value =
+          input_->GetRegister(kInterpreterAccumulatorRegister.code());
+      WriteValueToOutput(reinterpret_cast<Object*>(accumulator_value), 0,
+                         frame_index, output_frame_offset,
+                         "exception (from accumulator)");
+    } break;
   }
 
   if (must_handle_result) {
@@ -1565,6 +1679,8 @@ void Deoptimizer::DoComputeBuiltinContinuation(
   DebugPrintOutputSlot(value, frame_index, output_frame_offset,
                        "caller's fp\n");
 
+  DCHECK_EQ(output_frame_size_above_fp, output_frame_offset);
+
   if (FLAG_enable_embedded_constant_pool) {
     // Read the caller's constant pool from the previous frame.
     output_frame_offset -= kPointerSize;
@@ -1581,21 +1697,28 @@ void Deoptimizer::DoComputeBuiltinContinuation(
   // A marker value is used in place of the context.
   output_frame_offset -= kPointerSize;
   intptr_t marker =
-      java_script_builtin
-          ? StackFrame::TypeToMarker(
-                StackFrame::JAVA_SCRIPT_BUILTIN_CONTINUATION)
-          : StackFrame::TypeToMarker(StackFrame::BUILTIN_CONTINUATION);
+      StackFrame::TypeToMarker(BuiltinContinuationModeToFrameType(mode));
+
   output_frame->SetFrameSlot(output_frame_offset, marker);
   DebugPrintOutputSlot(marker, frame_index, output_frame_offset,
                        "context (builtin continuation sentinel)\n");
 
   output_frame_offset -= kPointerSize;
-  value = java_script_builtin ? maybe_function : 0;
+  value = BuiltinContinuationModeIsJavaScript(mode) ? maybe_function : 0;
+  output_frame->SetFrameSlot(output_frame_offset, value);
+  DebugPrintOutputSlot(
+      value, frame_index, output_frame_offset,
+      BuiltinContinuationModeIsJavaScript(mode) ? "JSFunction\n" : "unused\n");
+
+  // The delta from the SP to the FP; used to reconstruct SP in
+  // Isolate::UnwindAndFindHandler.
+  output_frame_offset -= kPointerSize;
+  value = static_cast<intptr_t>(output_frame_size_above_fp);
   output_frame->SetFrameSlot(output_frame_offset, value);
   DebugPrintOutputSlot(value, frame_index, output_frame_offset,
-                       java_script_builtin ? "JSFunction\n" : "unused\n");
+                       "frame height at deoptimization\n");
 
-  // The builtin to continue to
+  // The builtin to continue to.
   output_frame_offset -= kPointerSize;
   value = reinterpret_cast<intptr_t>(builtin);
   output_frame->SetFrameSlot(output_frame_offset, value);
@@ -1610,7 +1733,7 @@ void Deoptimizer::DoComputeBuiltinContinuation(
     output_frame->SetFrameSlot(output_frame_offset, value);
     if (trace_scope_ != nullptr) {
       ScopedVector<char> str(128);
-      if (java_script_builtin &&
+      if (BuiltinContinuationModeIsJavaScript(mode) &&
           code == kJavaScriptCallArgCountRegister.code()) {
         SNPrintF(
             str,
@@ -1675,25 +1798,15 @@ void Deoptimizer::DoComputeBuiltinContinuation(
   Register fp_reg = JavaScriptFrame::fp_register();
   output_frame->SetRegister(fp_reg.code(), output_[frame_index - 1]->GetFp());
 
-  Code* continue_to_builtin =
-      java_script_builtin
-          ? (must_handle_result
-                 ? isolate()->builtins()->builtin(
-                       Builtins::kContinueToJavaScriptBuiltinWithResult)
-                 : isolate()->builtins()->builtin(
-                       Builtins::kContinueToJavaScriptBuiltin))
-          : (must_handle_result
-                 ? isolate()->builtins()->builtin(
-                       Builtins::kContinueToCodeStubBuiltinWithResult)
-                 : isolate()->builtins()->builtin(
-                       Builtins::kContinueToCodeStubBuiltin));
+  Code* continue_to_builtin = isolate()->builtins()->builtin(
+      TrampolineForBuiltinContinuation(mode, must_handle_result));
   output_frame->SetPc(
-      reinterpret_cast<intptr_t>(continue_to_builtin->instruction_start()));
+      reinterpret_cast<intptr_t>(continue_to_builtin->InstructionStart()));
 
   Code* continuation =
       isolate()->builtins()->builtin(Builtins::kNotifyDeoptimized);
   output_frame->SetContinuation(
-      reinterpret_cast<intptr_t>(continuation->entry()));
+      reinterpret_cast<intptr_t>(continuation->InstructionStart()));
 }
 
 void Deoptimizer::MaterializeHeapObjects() {
@@ -1832,14 +1945,13 @@ void Deoptimizer::EnsureCodeForDeoptimizationEntry(Isolate* isolate,
   GenerateDeoptimizationEntries(&masm, kMaxNumberOfEntries, type);
   CodeDesc desc;
   masm.GetCode(isolate, &desc);
-  DCHECK(!RelocInfo::RequiresRelocation(isolate, desc));
+  DCHECK(!RelocInfo::RequiresRelocation(desc));
 
   // Allocate the code as immovable since the entry addresses will be used
   // directly and there is no support for relocating them.
   Handle<Code> code = isolate->factory()->NewCode(
       desc, Code::STUB, Handle<Object>(), Builtins::kNoBuiltinId,
-      MaybeHandle<HandlerTable>(), MaybeHandle<ByteArray>(),
-      MaybeHandle<DeoptimizationData>(), kImmovable);
+      MaybeHandle<ByteArray>(), MaybeHandle<DeoptimizationData>(), kImmovable);
   CHECK(Heap::IsImmovable(*code));
 
   CHECK_NULL(data->deopt_entry_code_[type]);
@@ -1932,6 +2044,14 @@ void Translation::BeginJavaScriptBuiltinContinuationFrame(BailoutId bailout_id,
                                                           int literal_id,
                                                           unsigned height) {
   buffer_->Add(JAVA_SCRIPT_BUILTIN_CONTINUATION_FRAME);
+  buffer_->Add(bailout_id.ToInt());
+  buffer_->Add(literal_id);
+  buffer_->Add(height);
+}
+
+void Translation::BeginJavaScriptBuiltinContinuationWithCatchFrame(
+    BailoutId bailout_id, int literal_id, unsigned height) {
+  buffer_->Add(JAVA_SCRIPT_BUILTIN_CONTINUATION_WITH_CATCH_FRAME);
   buffer_->Add(bailout_id.ToInt());
   buffer_->Add(literal_id);
   buffer_->Add(height);
@@ -2095,6 +2215,7 @@ int Translation::NumberOfOperandsFor(Opcode opcode) {
     case CONSTRUCT_STUB_FRAME:
     case BUILTIN_CONTINUATION_FRAME:
     case JAVA_SCRIPT_BUILTIN_CONTINUATION_FRAME:
+    case JAVA_SCRIPT_BUILTIN_CONTINUATION_WITH_CATCH_FRAME:
       return 3;
   }
   FATAL("Unexpected translation type");
@@ -2287,7 +2408,7 @@ DeoptimizedFrameInfo::DeoptimizedFrameInfo(TranslatedState* state,
 
 
 Deoptimizer::DeoptInfo Deoptimizer::GetDeoptInfo(Code* code, Address pc) {
-  CHECK(code->instruction_start() <= pc && pc <= code->instruction_end());
+  CHECK(code->InstructionStart() <= pc && pc <= code->InstructionEnd());
   SourcePosition last_position = SourcePosition::Unknown();
   DeoptimizeReason last_reason = DeoptimizeReason::kUnknown;
   int last_deopt_id = kNoDeoptimizationId;
@@ -2672,6 +2793,14 @@ TranslatedFrame TranslatedFrame::JavaScriptBuiltinContinuationFrame(
   return frame;
 }
 
+TranslatedFrame TranslatedFrame::JavaScriptBuiltinContinuationWithCatchFrame(
+    BailoutId bailout_id, SharedFunctionInfo* shared_info, int height) {
+  TranslatedFrame frame(kJavaScriptBuiltinContinuationWithCatch, shared_info,
+                        height);
+  frame.node_id_ = bailout_id;
+  return frame;
+}
+
 int TranslatedFrame::GetValueCount() {
   switch (kind()) {
     case kInterpretedFunction: {
@@ -2685,6 +2814,7 @@ int TranslatedFrame::GetValueCount() {
     case kConstructStub:
     case kBuiltinContinuation:
     case kJavaScriptBuiltinContinuation:
+    case kJavaScriptBuiltinContinuationWithCatch:
       return 1 + height_;
 
     case kInvalid:
@@ -2791,6 +2921,25 @@ TranslatedFrame TranslatedState::CreateNextTranslatedFrame(
       // added to the translation during code generation.
       int height_with_context = height + 1;
       return TranslatedFrame::JavaScriptBuiltinContinuationFrame(
+          bailout_id, shared_info, height_with_context);
+    }
+    case Translation::JAVA_SCRIPT_BUILTIN_CONTINUATION_WITH_CATCH_FRAME: {
+      BailoutId bailout_id = BailoutId(iterator->Next());
+      SharedFunctionInfo* shared_info =
+          SharedFunctionInfo::cast(literal_array->get(iterator->Next()));
+      int height = iterator->Next();
+      if (trace_file != nullptr) {
+        std::unique_ptr<char[]> name = shared_info->DebugName()->ToCString();
+        PrintF(trace_file,
+               "  reading JavaScript builtin continuation frame with catch %s",
+               name.get());
+        PrintF(trace_file, " => bailout_id=%d, height=%d; inputs:\n",
+               bailout_id.ToInt(), height);
+      }
+      // Add one to the height to account for the context which was implicitly
+      // added to the translation during code generation.
+      int height_with_context = height + 1;
+      return TranslatedFrame::JavaScriptBuiltinContinuationWithCatchFrame(
           bailout_id, shared_info, height_with_context);
     }
     case Translation::UPDATE_FEEDBACK:
@@ -2936,6 +3085,7 @@ int TranslatedState::CreateNextTranslatedValue(
     case Translation::ARGUMENTS_ADAPTOR_FRAME:
     case Translation::CONSTRUCT_STUB_FRAME:
     case Translation::JAVA_SCRIPT_BUILTIN_CONTINUATION_FRAME:
+    case Translation::JAVA_SCRIPT_BUILTIN_CONTINUATION_WITH_CATCH_FRAME:
     case Translation::BUILTIN_CONTINUATION_FRAME:
     case Translation::UPDATE_FEEDBACK:
       // Peeled off before getting here.
@@ -3376,6 +3526,16 @@ void TranslatedState::InitializeCapturedObjectAt(
       return;
 
     case FIXED_ARRAY_TYPE:
+    case BLOCK_CONTEXT_TYPE:
+    case CATCH_CONTEXT_TYPE:
+    case DEBUG_EVALUATE_CONTEXT_TYPE:
+    case EVAL_CONTEXT_TYPE:
+    case FUNCTION_CONTEXT_TYPE:
+    case MODULE_CONTEXT_TYPE:
+    case NATIVE_CONTEXT_TYPE:
+    case SCRIPT_CONTEXT_TYPE:
+    case WITH_CONTEXT_TYPE:
+    case BOILERPLATE_DESCRIPTION_TYPE:
     case HASH_TABLE_TYPE:
     case PROPERTY_ARRAY_TYPE:
     case CONTEXT_EXTENSION_TYPE:
@@ -3501,6 +3661,15 @@ void TranslatedState::EnsureCapturedObjectAllocatedAt(
       return MaterializeMutableHeapNumber(frame, &value_index, slot);
 
     case FIXED_ARRAY_TYPE:
+    case BLOCK_CONTEXT_TYPE:
+    case CATCH_CONTEXT_TYPE:
+    case DEBUG_EVALUATE_CONTEXT_TYPE:
+    case EVAL_CONTEXT_TYPE:
+    case FUNCTION_CONTEXT_TYPE:
+    case MODULE_CONTEXT_TYPE:
+    case NATIVE_CONTEXT_TYPE:
+    case SCRIPT_CONTEXT_TYPE:
+    case WITH_CONTEXT_TYPE:
     case HASH_TABLE_TYPE: {
       // Check we have the right size.
       int array_length =
@@ -3765,7 +3934,9 @@ TranslatedValue* TranslatedState::ResolveCapturedObject(TranslatedValue* slot) {
 TranslatedFrame* TranslatedState::GetFrameFromJSFrameIndex(int jsframe_index) {
   for (size_t i = 0; i < frames_.size(); i++) {
     if (frames_[i].kind() == TranslatedFrame::kInterpretedFunction ||
-        frames_[i].kind() == TranslatedFrame::kJavaScriptBuiltinContinuation) {
+        frames_[i].kind() == TranslatedFrame::kJavaScriptBuiltinContinuation ||
+        frames_[i].kind() ==
+            TranslatedFrame::kJavaScriptBuiltinContinuationWithCatch) {
       if (jsframe_index > 0) {
         jsframe_index--;
       } else {
@@ -3780,7 +3951,9 @@ TranslatedFrame* TranslatedState::GetArgumentsInfoFromJSFrameIndex(
     int jsframe_index, int* args_count) {
   for (size_t i = 0; i < frames_.size(); i++) {
     if (frames_[i].kind() == TranslatedFrame::kInterpretedFunction ||
-        frames_[i].kind() == TranslatedFrame::kJavaScriptBuiltinContinuation) {
+        frames_[i].kind() == TranslatedFrame::kJavaScriptBuiltinContinuation ||
+        frames_[i].kind() ==
+            TranslatedFrame::kJavaScriptBuiltinContinuationWithCatch) {
       if (jsframe_index > 0) {
         jsframe_index--;
       } else {
@@ -3906,7 +4079,7 @@ bool TranslatedState::DoUpdateFeedback() {
   if (!feedback_vector_handle_.is_null()) {
     CHECK(!feedback_slot_.IsInvalid());
     isolate()->CountUsage(v8::Isolate::kDeoptimizerDisableSpeculation);
-    CallICNexus nexus(feedback_vector_handle_, feedback_slot_);
+    FeedbackNexus nexus(feedback_vector_handle_, feedback_slot_);
     nexus.SetSpeculationMode(SpeculationMode::kDisallowSpeculation);
     return true;
   }
