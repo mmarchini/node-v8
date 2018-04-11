@@ -5,11 +5,8 @@
 #ifndef V8_EXECUTION_H_
 #define V8_EXECUTION_H_
 
-#include "src/allocation.h"
 #include "src/base/atomicops.h"
 #include "src/globals.h"
-#include "src/objects/code.h"
-#include "src/utils.h"
 
 namespace v8 {
 namespace internal {
@@ -29,21 +26,18 @@ class Execution final : public AllStatic {
   // When the function called is not in strict mode, receiver is
   // converted to an object.
   //
-  V8_EXPORT_PRIVATE MUST_USE_RESULT static MaybeHandle<Object> Call(
+  V8_EXPORT_PRIVATE V8_WARN_UNUSED_RESULT static MaybeHandle<Object> Call(
       Isolate* isolate, Handle<Object> callable, Handle<Object> receiver,
       int argc, Handle<Object> argv[]);
 
   // Construct object from function, the caller supplies an array of
   // arguments.
-  MUST_USE_RESULT static MaybeHandle<Object> New(Isolate* isolate,
-                                                 Handle<Object> constructor,
-                                                 int argc,
-                                                 Handle<Object> argv[]);
-  MUST_USE_RESULT static MaybeHandle<Object> New(Isolate* isolate,
-                                                 Handle<Object> constructor,
-                                                 Handle<Object> new_target,
-                                                 int argc,
-                                                 Handle<Object> argv[]);
+  V8_WARN_UNUSED_RESULT static MaybeHandle<Object> New(
+      Isolate* isolate, Handle<Object> constructor, int argc,
+      Handle<Object> argv[]);
+  V8_WARN_UNUSED_RESULT static MaybeHandle<Object> New(
+      Isolate* isolate, Handle<Object> constructor, Handle<Object> new_target,
+      int argc, Handle<Object> argv[]);
 
   // Call a function, just like Call(), but handle don't report exceptions
   // externally.

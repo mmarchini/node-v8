@@ -646,6 +646,7 @@ class LogicVRegister {
 class Simulator : public DecoderVisitor, public SimulatorBase {
  public:
   static void SetRedirectInstruction(Instruction* instruction);
+  static bool ICacheMatch(void* one, void* two) { return false; }
   static void FlushICache(base::CustomMatcherHashMap* i_cache, void* start,
                           size_t size) {
     USE(i_cache);
@@ -2195,6 +2196,7 @@ class Simulator : public DecoderVisitor, public SimulatorBase {
     Byte = 1,
     HalfWord = 2,
     Word = 4,
+    DoubleWord = 8,
   };
 
   TransactionSize get_transaction_size(unsigned size);

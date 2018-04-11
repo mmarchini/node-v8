@@ -4,7 +4,7 @@
 
 #include "src/builtins/builtins.h"
 
-#include "src/api-arguments.h"
+#include "src/api-arguments-inl.h"
 #include "src/api-natives.h"
 #include "src/builtins/builtins-utils.h"
 #include "src/counters.h"
@@ -41,7 +41,7 @@ JSObject* GetCompatibleReceiver(Isolate* isolate, FunctionTemplateInfo* info,
 }
 
 template <bool is_construct>
-MUST_USE_RESULT MaybeHandle<Object> HandleApiCallHelper(
+V8_WARN_UNUSED_RESULT MaybeHandle<Object> HandleApiCallHelper(
     Isolate* isolate, Handle<HeapObject> function,
     Handle<HeapObject> new_target, Handle<FunctionTemplateInfo> fun_data,
     Handle<Object> receiver, BuiltinArguments args) {
@@ -98,18 +98,13 @@ MUST_USE_RESULT MaybeHandle<Object> HandleApiCallHelper(
   if (!raw_call_data->IsUndefined(isolate)) {
     DCHECK(raw_call_data->IsCallHandlerInfo());
     CallHandlerInfo* call_data = CallHandlerInfo::cast(raw_call_data);
-    Object* callback_obj = call_data->callback();
-    v8::FunctionCallback callback =
-        v8::ToCData<v8::FunctionCallback>(callback_obj);
     Object* data_obj = call_data->data();
 
-    LOG(isolate, ApiObjectAccess("call", JSObject::cast(*js_receiver)));
 
     FunctionCallbackArguments custom(isolate, data_obj, *function, raw_holder,
                                      *new_target, &args[0] - 1,
                                      args.length() - 1);
-
-    Handle<Object> result = custom.Call(callback);
+    Handle<Object> result = custom.Call(call_data);
 
     RETURN_EXCEPTION_IF_SCHEDULED_EXCEPTION(isolate, Object);
     if (result.is_null()) {
@@ -154,7 +149,7 @@ class RelocatableArguments : public BuiltinArguments, public Relocatable {
 
   virtual inline void IterateInstance(RootVisitor* v) {
     if (length() == 0) return;
-    v->VisitRootPointers(Root::kRelocatable, lowest_address(),
+    v->VisitRootPointers(Root::kRelocatable, nullptr, lowest_address(),
                          highest_address() + 1);
   }
 
@@ -181,6 +176,25 @@ MaybeHandle<Object> Builtins::InvokeApiFunction(Isolate* isolate,
       ASSIGN_RETURN_ON_EXCEPTION(isolate, receiver,
                                  Object::ConvertReceiver(isolate, receiver),
                                  Object);
+    }
+  }
+
+  if (function->IsFunctionTemplateInfo()) {
+    Handle<FunctionTemplateInfo> info =
+        Handle<FunctionTemplateInfo>::cast(function);
+    // If we need to break at function entry, go the long way. Instantiate the
+    // function, use the DebugBreakTrampoline, and call it through JS.
+    if (info->BreakAtEntry()) {
+      DCHECK(!is_construct);
+      DCHECK(new_target->IsUndefined(isolate));
+      Handle<JSFunction> function;
+      ASSIGN_RETURN_ON_EXCEPTION(isolate, function,
+                                 ApiNatives::InstantiateFunction(
+                                     info, MaybeHandle<v8::internal::Name>()),
+                                 Object);
+      Handle<Code> trampoline = BUILTIN_CODE(isolate, DebugBreakTrampoline);
+      function->set_code(*trampoline);
+      return Execution::Call(isolate, function, receiver, argc, args);
     }
   }
 
@@ -228,7 +242,7 @@ MaybeHandle<Object> Builtins::InvokeApiFunction(Isolate* isolate,
 // Helper function to handle calls to non-function objects created through the
 // API. The object can be called as either a constructor (using new) or just as
 // a function (without new).
-MUST_USE_RESULT static Object* HandleApiCallAsFunctionOrConstructor(
+V8_WARN_UNUSED_RESULT static Object* HandleApiCallAsFunctionOrConstructor(
     Isolate* isolate, bool is_construct_call, BuiltinArguments args) {
   Handle<Object> receiver = args.receiver();
 
@@ -256,23 +270,17 @@ MUST_USE_RESULT static Object* HandleApiCallAsFunctionOrConstructor(
   Object* handler =
       constructor->shared()->get_api_func_data()->instance_call_handler();
   DCHECK(!handler->IsUndefined(isolate));
-  // TODO(ishell): remove this debugging code.
-  CHECK(handler->IsCallHandlerInfo());
   CallHandlerInfo* call_data = CallHandlerInfo::cast(handler);
-  Object* callback_obj = call_data->callback();
-  v8::FunctionCallback callback =
-      v8::ToCData<v8::FunctionCallback>(callback_obj);
 
   // Get the data for the call and perform the callback.
   Object* result;
   {
     HandleScope scope(isolate);
     LOG(isolate, ApiObjectAccess("call non-function", obj));
-
     FunctionCallbackArguments custom(isolate, call_data->data(), constructor,
                                      obj, new_target, &args[0] - 1,
                                      args.length() - 1);
-    Handle<Object> result_handle = custom.Call(callback);
+    Handle<Object> result_handle = custom.Call(call_data);
     if (result_handle.is_null()) {
       result = isolate->heap()->undefined_value();
     } else {

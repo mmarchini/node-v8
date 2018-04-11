@@ -7,7 +7,7 @@
 #include "src/compiler/common-operator.h"
 #include "src/compiler/type-cache.h"
 #include "src/compiler/types.h"
-#include "src/factory.h"
+#include "src/heap/factory.h"
 #include "src/isolate.h"
 
 #include "src/objects-inl.h"
@@ -510,7 +510,7 @@ Type* OperationTyper::NumberToString(Type* type) {
   if (type->IsNone()) return type;
   if (type->Is(Type::NaN())) return singleton_NaN_string_;
   if (type->Is(cache_.kZeroOrMinusZero)) return singleton_zero_string_;
-  return Type::SeqString();
+  return Type::String();
 }
 
 Type* OperationTyper::NumberToUint32(Type* type) {
