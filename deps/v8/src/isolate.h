@@ -893,6 +893,10 @@ class Isolate {
     DCHECK_NOT_NULL(logger_);
     return logger_;
   }
+  bool has_code_event_listener() {
+    // TODO (mmarchini): track code event listeners life
+    return true;
+  }
   StackGuard* stack_guard() { return &stack_guard_; }
   Heap* heap() { return &heap_; }
   wasm::WasmEngine* wasm_engine() const { return wasm_engine_.get(); }

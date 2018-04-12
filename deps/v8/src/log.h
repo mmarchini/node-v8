@@ -8,6 +8,7 @@
 #include <set>
 #include <string>
 
+#include "include/v8-profiler.h"
 #include "src/allocation.h"
 #include "src/base/compiler-specific.h"
 #include "src/base/platform/elapsed-timer.h"
@@ -422,6 +423,39 @@ class CodeEventLogger : public CodeEventListener {
                                  int length) = 0;
 
   NameBuffer* name_buffer_;
+};
+
+class ExternalCodeEventListener : public CodeEventLogger {
+ public:
+  ExternalCodeEventListener(Isolate* isolate);
+  ~ExternalCodeEventListener() override;
+
+  void CodeMoveEvent(AbstractCode* from, Address to) override {}
+  void CodeDisableOptEvent(AbstractCode* code,
+                           SharedFunctionInfo* shared) override {}
+
+  void StartListening();
+  void StopListening();
+
+  void SetCodeEventHandler(CodeEventHandler* code_event_handler);
+
+ private:
+  void LogRecordedBuffer(AbstractCode* code, SharedFunctionInfo* shared,
+                         const char* name, int length) override;
+  void LogRecordedBuffer(const wasm::WasmCode* code, const char* name,
+                         int length) override;
+
+  // void LogExistingCode();
+  // void LogCodeObjects();
+  // void LogCodeObject(Object* object);
+  // void LogBytecodeHandlers();
+  // void LogCompiledFunctions();
+  // void LogExistingFunction(Handle<SharedFunctionInfo> shared,
+  //                                  Handle<AbstractCode> code);
+
+  bool is_listening_;
+  Isolate* isolate_;
+  CodeEventHandler* code_event_handler_;
 };
 
 

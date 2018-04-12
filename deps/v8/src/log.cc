@@ -7,6 +7,7 @@
 #include <cstdarg>
 #include <memory>
 #include <sstream>
+#include <iostream>
 
 #include "src/api.h"
 #include "src/bailout-reason.h"
@@ -482,6 +483,68 @@ void PerfBasicLogger::LogRecordedBuffer(const wasm::WasmCode* code,
   WriteLogRecordedBuffer(
       reinterpret_cast<uintptr_t>(code->instructions().start()),
       code->instructions().length(), name, length);
+}
+
+// External CodeEventListener
+ExternalCodeEventListener::ExternalCodeEventListener(Isolate* isolate)
+    : is_listening_(false), isolate_(isolate), code_event_handler_(nullptr) {}
+
+
+ExternalCodeEventListener::~ExternalCodeEventListener() {
+  if (is_listening_) {
+    StopListening();
+  }
+}
+
+void ExternalCodeEventListener::StartListening() {
+  if (is_listening_ || code_event_handler_ == nullptr) {
+    std::cout << "already listening " << std::endl;
+    return;
+  }
+  std::cout << "start listening " << std::endl;
+  is_listening_ = isolate_->code_event_dispatcher()->AddListener(this);
+}
+
+void ExternalCodeEventListener::StopListening() {
+  if (!is_listening_) {
+    std::cout << "not listening " << std::endl;
+    return;
+  }
+  std::cout << "stop listening " << std::endl;
+  isolate_->code_event_dispatcher()->RemoveListener(this);
+  is_listening_ = false;
+}
+
+void ExternalCodeEventListener::SetCodeEventHandler(
+    CodeEventHandler* code_event_handler) {
+  code_event_handler_ = code_event_handler;
+}
+
+void ExternalCodeEventListener::LogRecordedBuffer(AbstractCode* code, SharedFunctionInfo* shared,
+                                        const char* name, int) {
+  // Handle<Script> script = shared->script();
+  // int line_num = Script::GetLineNumber(script, shared->StartPosition()) + 1;
+  // int column_num = Script::GetColumnNumber(script, shared->StartPosition()) + 1;
+  // String* script_name = script->name()->IsString()
+  //                           ? String::cast(script->name())
+                            // : isolate->heap()->empty_string();
+  CodeEvent code_event {
+    reinterpret_cast<uintptr_t>(code->InstructionStart()),
+    static_cast<size_t>(code->InstructionSize()),
+    name
+  };
+  // code_event.code_start_address = ;
+  // code_event.code_size = ;
+  // code_event.name = ;
+
+  std::cout << "trying to handle " << name << std::endl;
+  (*code_event_handler_)(code_event);
+  std::cout << "handled " << name << std::endl;
+}
+
+void ExternalCodeEventListener::LogRecordedBuffer(const wasm::WasmCode* code,
+                                        const char* name, int length) {
+  std::cout << "Logging wasm code " << name << std::endl;
 }
 
 // Low-level logging support.

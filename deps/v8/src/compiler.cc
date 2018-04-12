@@ -85,7 +85,8 @@ void LogFunctionCompilation(CodeEventListener::LogEventsAndTags tag,
   // script name and line number. Check explicitly whether logging is
   // enabled as finding the line number is not free.
   if (!isolate->logger()->is_logging_code_events() &&
-      !isolate->is_profiling() && !FLAG_log_function_events) {
+      !isolate->is_profiling() && !FLAG_log_function_events &&
+      !isolate->has_code_event_listener()) {
     return;
   }
 

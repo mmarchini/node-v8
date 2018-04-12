@@ -10212,6 +10212,31 @@ void CpuProfiler::SetIdle(bool is_idle) {
 }
 
 
+CodeEventListener* CodeEventListener::New(Isolate* isolate) {
+  return reinterpret_cast<CodeEventListener*>(
+      new i::ExternalCodeEventListener(reinterpret_cast<i::Isolate*>(isolate)));
+}
+
+
+void CodeEventListener::Dispose() {
+  delete reinterpret_cast<i::ExternalCodeEventListener*>(this);
+}
+
+
+void CodeEventListener::StartListening() {
+  reinterpret_cast<i::ExternalCodeEventListener*>(this)->StartListening();
+}
+
+
+void CodeEventListener::StopListening() {
+  reinterpret_cast<i::ExternalCodeEventListener*>(this)->StopListening();
+}
+
+void CodeEventListener::SetCodeEventHandler(CodeEventHandler* code_event_handler) {
+  reinterpret_cast<i::ExternalCodeEventListener*>(this)->SetCodeEventHandler(code_event_handler);
+}
+
+
 static i::HeapGraphEdge* ToInternal(const HeapGraphEdge* edge) {
   return const_cast<i::HeapGraphEdge*>(
       reinterpret_cast<const i::HeapGraphEdge*>(edge));

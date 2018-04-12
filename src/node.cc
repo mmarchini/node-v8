@@ -19,6 +19,8 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+#include <iostream>
+
 #include "node_buffer.h"
 #include "node_constants.h"
 #include "node_javascript.h"
@@ -1544,15 +1546,28 @@ void GetActiveHandles(const FunctionCallbackInfo<Value>& args) {
 }
 
 
+static v8::CodeEventListener* lala = nullptr;
+
+
+void MyCodeEventHandler(const v8::CodeEvent& code_event) {
+  std::cout << "VAMO DALE  " << code_event.name << std::endl;
+}
+
+
 void EnablePerfBasicProf(const FunctionCallbackInfo<Value>& args) {
   auto isolate = args.GetIsolate();
-  isolate->EnablePerfBasicProf();
+  lala = v8::CodeEventListener::New(isolate);
+  lala->SetCodeEventHandler(&MyCodeEventHandler);
+  std::cout << "vamo que vamo" << std::endl;
+  lala->StartListening();
+  // isolate->EnablePerfBasicProf();
 }
 
 
 void DisablePerfBasicProf(const FunctionCallbackInfo<Value>& args) {
-  auto isolate = args.GetIsolate();
-  isolate->DisablePerfBasicProf();
+  lala->Dispose();
+  // auto isolate = args.GetIsolate();
+  // isolate->DisablePerfBasicProf();
 }
 
 

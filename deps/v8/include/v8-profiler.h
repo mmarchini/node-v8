@@ -988,6 +988,45 @@ struct HeapStatsUpdate {
   uint32_t size;  // New value of size field for the interval with this index.
 };
 
+struct V8_EXPORT CodeEvent {
+  uintptr_t code_start_address;
+  size_t code_size;
+  const char* name;
+  // std::string function_name();
+  // std::string script_name();
+  // int script_line;
+  // int script_column;
+};
+
+typedef void (CodeEventHandler)(const CodeEvent& code_event);
+
+class V8_EXPORT CodeEventListener {
+ public:
+  /**
+   * Creates a new Code Event Listener for the |isolate|. The isolate must be
+   * initialized. The profiler object must be disposed after use by calling
+   * |Dispose| method.
+   */
+  static CodeEventListener* New(Isolate* isolate);
+
+  void StartListening();
+  void StopListening();
+
+  void SetCodeEventHandler(CodeEventHandler* code_event_handler);
+
+  /**
+   * Disposes the CPU profiler object.
+   */
+  void Dispose();
+
+  // void CodeEventHandler(CodeEvent &codeEvent) {};
+
+ private:
+  CodeEventListener();
+  ~CodeEventListener();
+  CodeEventListener(const CodeEventListener&);
+  CodeEventListener& operator=(const CodeEventListener&);
+};
 
 }  // namespace v8
 
