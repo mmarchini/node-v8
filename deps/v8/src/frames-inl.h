@@ -276,6 +276,10 @@ inline StackFrame* SafeStackFrameIterator::frame() const {
   return frame_;
 }
 
+inline StackFrame* SafeFullStackFrameIterator::frame() const {
+  DCHECK(!done());
+  return frame_;
+}
 
 }  // namespace internal
 }  // namespace v8

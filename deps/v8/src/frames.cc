@@ -397,6 +397,123 @@ void SafeStackFrameIterator::Advance() {
 
 // -------------------------------------------------------------------------
 
+SafeFullStackFrameIterator::SafeFullStackFrameIterator(
+    Isolate* isolate,
+    Address fp, Address sp, Address js_entry_sp)
+    : StackFrameIteratorBase(isolate, false),
+      low_bound_(sp),
+      high_bound_(js_entry_sp) {
+  StackFrame::State state;
+  StackFrame::Type type;
+  if (!IsValidStackAddress(fp)) {
+    return;
+  }
+  DCHECK_NOT_NULL(fp);
+  state.fp = fp;
+  state.sp = sp;
+  state.pc_address = StackFrame::ResolveReturnAddressLocation(
+      reinterpret_cast<Address*>(StandardFrame::ComputePCAddress(fp)));
+
+  // If the top of stack is a return address to the interpreter trampoline,
+  // then we are likely in a bytecode handler with elided frame. In that
+  // case, set the PC properly and make sure we do not drop the frame.
+  if (IsValidStackAddress(sp)) {
+    MSAN_MEMORY_IS_INITIALIZED(sp, kPointerSize);
+    Address tos = ReadMemoryAt(reinterpret_cast<Address>(sp));
+    if (IsInterpreterFramePc(isolate, tos)) {
+      state.pc_address = reinterpret_cast<Address*>(sp);
+    }
+  }
+
+  // StackFrame::ComputeType will read both kContextOffset and kMarkerOffset,
+  // we check only that kMarkerOffset is within the stack bounds and do
+  // compile time check that kContextOffset slot is pushed on the stack before
+  // kMarkerOffset.
+  STATIC_ASSERT(StandardFrameConstants::kFunctionOffset <
+                StandardFrameConstants::kContextOffset);
+  Address frame_marker = fp + StandardFrameConstants::kFunctionOffset;
+  if (IsValidStackAddress(frame_marker)) {
+    type = StackFrame::ComputeType(this, &state);
+  } else {
+    // Mark the frame as OPTIMIZED if we cannot determine its type.
+    // We chose OPTIMIZED rather than INTERPRETED because it's closer to
+    // the original value of StackFrame::JAVA_SCRIPT here, in that JAVA_SCRIPT
+    // referred to full-codegen frames (now removed from the tree), and
+    // OPTIMIZED refers to turbofan frames, both of which are generated
+    // code. INTERPRETED frames refer to bytecode.
+    // The frame anyways will be skipped.
+    type = StackFrame::OPTIMIZED;
+  }
+  frame_ = SingletonFor(type, &state);
+}
+
+
+bool SafeFullStackFrameIterator::IsValidFrame(StackFrame* frame) const {
+  return IsValidStackAddress(frame->sp()) && IsValidStackAddress(frame->fp());
+}
+
+
+bool SafeFullStackFrameIterator::IsValidCaller(StackFrame* frame) {
+  StackFrame::State state;
+  if (frame->is_entry() || frame->is_construct_entry()) {
+    // See EntryFrame::GetCallerState. It computes the caller FP address
+    // and calls ExitFrame::GetStateForFramePointer on it. We need to be
+    // sure that caller FP address is valid.
+    Address caller_fp = Memory::Address_at(
+        frame->fp() + EntryFrameConstants::kCallerFPOffset);
+    if (!IsValidExitFrame(caller_fp)) return false;
+  } else if (frame->is_arguments_adaptor()) {
+    // See ArgumentsAdaptorFrame::GetCallerStackPointer. It assumes that
+    // the number of arguments is stored on stack as Smi. We need to check
+    // that it really an Smi.
+    Object* number_of_args = reinterpret_cast<ArgumentsAdaptorFrame*>(frame)->
+        GetExpression(0);
+    if (!number_of_args->IsSmi()) {
+      return false;
+    }
+  }
+  frame->ComputeCallerState(&state);
+  return IsValidStackAddress(state.sp) && IsValidStackAddress(state.fp) &&
+         SingletonFor(frame->GetCallerState(&state)) != nullptr;
+}
+
+
+bool SafeFullStackFrameIterator::IsValidExitFrame(Address fp) const {
+  if (!IsValidStackAddress(fp)) return false;
+  Address sp = ExitFrame::ComputeStackPointer(fp);
+  if (!IsValidStackAddress(sp)) return false;
+  StackFrame::State state;
+  ExitFrame::FillState(fp, sp, &state);
+  MSAN_MEMORY_IS_INITIALIZED(state.pc_address, sizeof(state.pc_address));
+  return *state.pc_address != nullptr;
+}
+
+
+void SafeFullStackFrameIterator::Advance() {
+  DCHECK(!done());
+  StackFrame* last_frame = frame_;
+  Address last_sp = last_frame->sp(), last_fp = last_frame->fp();
+  // Before advancing to the next stack frame, perform pointer validity tests.
+  if (!IsValidFrame(last_frame) || !IsValidCaller(last_frame)) {
+    frame_ = nullptr;
+    return;
+  }
+
+  // Advance to the previous frame.
+  StackFrame::State state;
+  StackFrame::Type type = frame_->GetCallerState(&state);
+  frame_ = SingletonFor(type, &state);
+  if (!frame_) return;
+
+  // Check that we have actually moved to the previous frame in the stack.
+  if (frame_->sp() < last_sp || frame_->fp() < last_fp) {
+    frame_ = nullptr;
+  }
+}
+
+// -------------------------------------------------------------------------
+
+
 namespace {
 Code* GetContainingCode(Isolate* isolate, Address pc) {
   return isolate->inner_pointer_to_code_cache()->GetCacheEntry(pc)->code;

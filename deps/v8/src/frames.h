@@ -331,6 +331,7 @@ class StackFrame BASE_EMBEDDED {
   friend class StackFrameIteratorBase;
   friend class StackHandlerIterator;
   friend class SafeStackFrameIterator;
+  friend class SafeFullStackFrameIterator;
 };
 
 class NativeFrame : public StackFrame {
@@ -698,6 +699,7 @@ class StandardFrame : public StackFrame {
  private:
   friend class StackFrame;
   friend class SafeStackFrameIterator;
+  friend class SafeFullStackFrameIterator;
 };
 
 class JavaScriptFrame : public StandardFrame {
@@ -1303,6 +1305,30 @@ class SafeStackFrameIterator: public StackFrameIteratorBase {
   StackFrame::Type top_frame_type_;
   ExternalCallbackScope* external_callback_scope_;
 };
+
+
+class SafeFullStackFrameIterator: public StackFrameIteratorBase {
+ public:
+  SafeFullStackFrameIterator(Isolate* isolate,
+                             Address fp, Address sp,
+                             Address js_entry_sp);
+
+  inline StackFrame* frame() const;
+  StackFrame::Type top_frame_type() const { return StackFrame::NONE; }
+  void Advance();
+
+ private:
+  bool IsValidStackAddress(Address addr) const {  // Checked: keep
+    return low_bound_ <= addr && addr <= high_bound_;
+  }
+  bool IsValidFrame(StackFrame* frame) const;  // Checked: keep
+  bool IsValidCaller(StackFrame* frame);  // Checked: keep (maybe modify)
+  bool IsValidExitFrame(Address fp) const;  // Checked: not sure if should keep
+
+  const Address low_bound_;
+  const Address high_bound_;
+};
+
 
 // Reads all frames on the current stack and copies them into the current
 // zone memory.

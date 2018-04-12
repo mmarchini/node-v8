@@ -227,9 +227,13 @@ bool TickSample::GetStackSample(Isolate* v8_isolate, RegisterState* regs,
                                                : *external_callback_entry_ptr;
   }
 
-  i::SafeStackFrameIterator it(isolate, reinterpret_cast<i::Address>(regs->fp),
+  i::SafeFullStackFrameIterator it(isolate, reinterpret_cast<i::Address>(regs->fp),
                                reinterpret_cast<i::Address>(regs->sp),
                                js_entry_sp);
+
+  // i::SafeStackFrameIterator it(isolate, reinterpret_cast<i::Address>(regs->fp),
+  //                              reinterpret_cast<i::Address>(regs->sp),
+  //                              js_entry_sp);
   if (it.done()) return true;
 
   size_t i = 0;
