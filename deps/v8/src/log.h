@@ -100,6 +100,11 @@ class Logger : public CodeEventListener {
   // The separator is used to write an unescaped "," into the log.
   static const LogSeparator kNext = LogSeparator::kSeparator;
 
+  enum LogExistingCode {
+    kLogExistingCode,
+    kDontLogExistingCode
+  };
+
   // Acquires resources for logging if the right flags are set.
   bool SetUp(Isolate* isolate);
 
@@ -124,6 +129,10 @@ class Logger : public CodeEventListener {
 
   // Emits an event with a string value -> (name, value).
   void StringEvent(const char* name, const char* value);
+
+  void EnablePerfBasicProf();
+  void DisablePerfBasicProf();
+  bool IsEnabledPerfBasicProf();
 
   // Emits an event with an int value -> (name, value).
   void IntPtrTEvent(const char* name, intptr_t value);
@@ -273,6 +282,9 @@ class Logger : public CodeEventListener {
 
   // Emits the profiler's first message.
   void ProfilerBeginEvent();
+
+  void SetPerfBasicProf(LogExistingCode log_existing_code);
+  void UnsetPerfBasicProf();
 
   // Emits callback event messages.
   void CallbackEventInternal(const char* prefix,

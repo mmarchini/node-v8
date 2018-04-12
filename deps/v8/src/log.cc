@@ -68,6 +68,12 @@ static const char* ComputeMarker(const wasm::WasmCode* code) {
   }
 }
 
+class EnumerateOptimizedFunctionsVisito;
+static int EnumerateCompiledFunctions(Heap* heap, Handle<SharedFunctionInfo>* sfis,
+                                      Handle<AbstractCode>* code_objects);
+static int EnumerateWasmModules(Heap* heap,
+                                Handle<WasmCompiledModule>* modules);
+
 class CodeEventLogger::NameBuffer {
  public:
   NameBuffer() { Reset(); }
@@ -241,7 +247,7 @@ void CodeEventLogger::RegExpCodeCreateEvent(AbstractCode* code,
 // Linux perf tool logging support
 class PerfBasicLogger : public CodeEventLogger {
  public:
-  PerfBasicLogger();
+  PerfBasicLogger(Isolate* isolate, Logger::LogExistingCode log_existing_code);
   ~PerfBasicLogger() override;
 
   void CodeMoveEvent(AbstractCode* from, Address to) override {}
@@ -256,18 +262,29 @@ class PerfBasicLogger : public CodeEventLogger {
   void WriteLogRecordedBuffer(uintptr_t address, int size, const char* name,
                               int name_length);
 
+  void LogExistingCode();
+  void LogCodeObjects();
+  void LogCodeObject(Object* object);
+  void LogBytecodeHandlers();
+  void LogCompiledFunctions();
+  void LogExistingFunction(Handle<SharedFunctionInfo> shared,
+                                   Handle<AbstractCode> code);
+
   // Extension added to V8 log file name to get the low-level log name.
   static const char kFilenameFormatString[];
   static const int kFilenameBufferPadding;
 
   FILE* perf_output_handle_;
+  Isolate* isolate_;
+  bool enabled_ = false;
 };
 
 const char PerfBasicLogger::kFilenameFormatString[] = "/tmp/perf-%d.map";
 // Extra space for the PID in the filename
 const int PerfBasicLogger::kFilenameBufferPadding = 16;
 
-PerfBasicLogger::PerfBasicLogger() : perf_output_handle_(nullptr) {
+PerfBasicLogger::PerfBasicLogger(Isolate* isolate, Logger::LogExistingCode log_existing_code)
+    : perf_output_handle_(nullptr), isolate_(isolate), enabled_(FLAG_perf_basic_prof) {
   // Open the perf JIT dump file.
   int bufferSize = sizeof(kFilenameFormatString) + kFilenameBufferPadding;
   ScopedVector<char> perf_dump_name(bufferSize);
@@ -280,6 +297,9 @@ PerfBasicLogger::PerfBasicLogger() : perf_output_handle_(nullptr) {
       base::OS::FOpen(perf_dump_name.start(), base::OS::LogFileOpenMode);
   CHECK_NOT_NULL(perf_output_handle_);
   setvbuf(perf_output_handle_, nullptr, _IOLBF, 0);
+  if (log_existing_code == Logger::LogExistingCode::kLogExistingCode) {
+    LogExistingCode();
+  }
 }
 
 
@@ -300,6 +320,150 @@ void PerfBasicLogger::WriteLogRecordedBuffer(uintptr_t address, int size,
   base::OS::FPrint(perf_output_handle_, "%" V8PRIxPTR " %x %.*s\n", address,
                    size, name_length, name);
 }
+
+
+void PerfBasicLogger::LogCodeObject(Object* object) {
+  AbstractCode* code_object = AbstractCode::cast(object);
+  CodeEventListener::LogEventsAndTags tag = CodeEventListener::STUB_TAG;
+  const char* description = "Unknown code from before profiling";
+  switch (code_object->kind()) {
+    case AbstractCode::INTERPRETED_FUNCTION:
+    case AbstractCode::OPTIMIZED_FUNCTION:
+      return;  // We log this later using LogCompiledFunctions.
+    case AbstractCode::BYTECODE_HANDLER:
+      return;  // We log it later by walking the dispatch table.
+    case AbstractCode::STUB:
+      description =
+          CodeStub::MajorName(CodeStub::GetMajorKey(code_object->GetCode()));
+      if (description == nullptr) description = "A stub from before profiling";
+      tag = CodeEventListener::STUB_TAG;
+      break;
+    case AbstractCode::REGEXP:
+      description = "Regular expression code";
+      tag = CodeEventListener::REG_EXP_TAG;
+      break;
+    case AbstractCode::BUILTIN:
+      description =
+          isolate_->builtins()->name(code_object->GetCode()->builtin_index());
+      tag = CodeEventListener::BUILTIN_TAG;
+      break;
+    case AbstractCode::WASM_FUNCTION:
+      description = "A Wasm function";
+      tag = CodeEventListener::FUNCTION_TAG;
+      break;
+    case AbstractCode::JS_TO_WASM_FUNCTION:
+      description = "A JavaScript to Wasm adapter";
+      tag = CodeEventListener::STUB_TAG;
+      break;
+    case AbstractCode::WASM_TO_JS_FUNCTION:
+      description = "A Wasm to JavaScript adapter";
+      tag = CodeEventListener::STUB_TAG;
+      break;
+    case AbstractCode::WASM_INTERPRETER_ENTRY:
+      description = "A Wasm to Interpreter adapter";
+      tag = CodeEventListener::STUB_TAG;
+      break;
+    case AbstractCode::C_WASM_ENTRY:
+      description = "A C to Wasm entry stub";
+      tag = CodeEventListener::STUB_TAG;
+      break;
+    case AbstractCode::NUMBER_OF_KINDS:
+      UNIMPLEMENTED();
+  }
+  CodeCreateEvent(tag, code_object, description);
+  // PROFILE(isolate_, CodeCreateEvent(tag, code_object, description));
+}
+
+
+void PerfBasicLogger::LogCodeObjects() {
+  Heap* heap = isolate_->heap();
+  HeapIterator iterator(heap);
+  DisallowHeapAllocation no_gc;
+  for (HeapObject* obj = iterator.next(); obj != nullptr;
+       obj = iterator.next()) {
+    if (obj->IsCode()) LogCodeObject(obj);
+    if (obj->IsBytecodeArray()) LogCodeObject(obj);
+  }
+}
+
+void PerfBasicLogger::LogCompiledFunctions() {
+  Heap* heap = isolate_->heap();
+  HandleScope scope(isolate_);
+  const int compiled_funcs_count =
+      EnumerateCompiledFunctions(heap, nullptr, nullptr);
+  ScopedVector<Handle<SharedFunctionInfo>> sfis(compiled_funcs_count);
+  ScopedVector<Handle<AbstractCode> > code_objects(compiled_funcs_count);
+  EnumerateCompiledFunctions(heap, sfis.start(), code_objects.start());
+
+  // During iteration, there can be heap allocation due to
+  // GetScriptLineNumber call.
+  for (int i = 0; i < compiled_funcs_count; ++i) {
+    if (code_objects[i].is_identical_to(BUILTIN_CODE(isolate_, CompileLazy)))
+      continue;
+    LogExistingFunction(sfis[i], code_objects[i]);
+  }
+
+  const int compiled_wasm_modules_count = EnumerateWasmModules(heap, nullptr);
+  ScopedVector<Handle<WasmCompiledModule>> modules(compiled_wasm_modules_count);
+  EnumerateWasmModules(heap, modules.start());
+  for (int i = 0; i < compiled_wasm_modules_count; ++i) {
+    modules[i]->LogWasmCodes(isolate_);
+  }
+}
+
+
+void PerfBasicLogger::LogExistingCode() {
+  HandleScope scope(isolate_);
+  LogCodeObjects();
+  LogCompiledFunctions();
+}
+
+
+void PerfBasicLogger::LogExistingFunction(Handle<SharedFunctionInfo> shared,
+                                 Handle<AbstractCode> code) {
+   if (shared->script()->IsScript()) {
+    Handle<Script> script(Script::cast(shared->script()));
+    int line_num = Script::GetLineNumber(script, shared->StartPosition()) + 1;
+    int column_num =
+        Script::GetColumnNumber(script, shared->StartPosition()) + 1;
+    if (script->name()->IsString()) {
+      Handle<String> script_name(String::cast(script->name()));
+      if (line_num > 0) {
+        CodeCreateEvent(
+                    Logger::ToNativeByScript(
+                        CodeEventListener::LAZY_COMPILE_TAG, *script),
+                    *code, *shared, *script_name, line_num, column_num);
+      } else {
+        // Can't distinguish eval and script here, so always use Script.
+        CodeCreateEvent(Logger::ToNativeByScript(
+                                    CodeEventListener::SCRIPT_TAG, *script),
+                                *code, *shared, *script_name);
+      }
+    } else {
+      CodeCreateEvent(Logger::ToNativeByScript(
+                                  CodeEventListener::LAZY_COMPILE_TAG, *script),
+                              *code, *shared, isolate_->heap()->empty_string(),
+                              line_num, column_num);
+    }
+  } else if (shared->IsApiFunction()) {
+    // API function.
+    FunctionTemplateInfo* fun_data = shared->get_api_func_data();
+    Object* raw_call_data = fun_data->call_code();
+    if (!raw_call_data->IsUndefined(isolate_)) {
+      CallHandlerInfo* call_data = CallHandlerInfo::cast(raw_call_data);
+      Object* callback_obj = call_data->callback();
+      Address entry_point = v8::ToCData<Address>(callback_obj);
+#if USES_FUNCTION_DESCRIPTORS
+      entry_point = *FUNCTION_ENTRYPOINT_ADDRESS(entry_point);
+#endif
+      CallbackEvent(shared->DebugName(), entry_point);
+    }
+  } else {
+    CodeCreateEvent(CodeEventListener::LAZY_COMPILE_TAG, *code, *shared,
+                            isolate_->heap()->empty_string());
+  }
+}
+
 
 void PerfBasicLogger::LogRecordedBuffer(AbstractCode* code, SharedFunctionInfo*,
                                         const char* name, int length) {
@@ -1879,6 +2043,44 @@ static void PrepareLogFileName(std::ostream& os,  // NOLINT
 }
 
 
+void Logger::SetPerfBasicProf(LogExistingCode log_existing_code) {
+  if(perf_basic_logger_) {
+    return;
+  }
+  perf_basic_logger_ = new PerfBasicLogger(isolate_, log_existing_code);
+  addCodeEventListener(perf_basic_logger_);
+}
+
+
+void Logger::EnablePerfBasicProf() {
+  if(perf_basic_logger_) {
+    return;
+  }
+  perf_basic_logger_ = new PerfBasicLogger(
+      isolate_, LogExistingCode::kLogExistingCode);
+  addCodeEventListener(perf_basic_logger_);
+}
+
+void Logger::DisablePerfBasicProf() {
+  if(!perf_basic_logger_) {
+    return;
+  }
+  UnsetPerfBasicProf();
+}
+
+bool Logger::IsEnabledPerfBasicProf() {
+  return perf_basic_logger_ != nullptr;
+}
+
+void Logger::UnsetPerfBasicProf() {
+  if (perf_basic_logger_) {
+    removeCodeEventListener(perf_basic_logger_);
+    delete perf_basic_logger_;
+    perf_basic_logger_ = nullptr;
+  }
+}
+
+
 bool Logger::SetUp(Isolate* isolate) {
   // Tests and EnsureInitialize() can call this twice in a row. It's harmless.
   if (is_initialized_) return true;
@@ -1890,8 +2092,7 @@ bool Logger::SetUp(Isolate* isolate) {
   log_ = new Log(this, log_file_name.str().c_str());
 
   if (FLAG_perf_basic_prof) {
-    perf_basic_logger_ = new PerfBasicLogger();
-    addCodeEventListener(perf_basic_logger_);
+    SetPerfBasicProf(LogExistingCode::kDontLogExistingCode);
   }
 
   if (FLAG_perf_prof) {
@@ -1979,11 +2180,7 @@ FILE* Logger::TearDown() {
   delete ticker_;
   ticker_ = nullptr;
 
-  if (perf_basic_logger_) {
-    removeCodeEventListener(perf_basic_logger_);
-    delete perf_basic_logger_;
-    perf_basic_logger_ = nullptr;
-  }
+  UnsetPerfBasicProf();
 
   if (perf_jit_logger_) {
     removeCodeEventListener(perf_jit_logger_);
