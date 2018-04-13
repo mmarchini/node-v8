@@ -94,6 +94,26 @@ class WasmCode;
     if (logger->is_logging_code_events()) logger->Call; \
   } while (false)
 
+class CollectExistingCode {
+ public:
+  CollectExistingCode(Isolate* isolate, CodeEventListener* listener = nullptr)
+      : isolate_(isolate), listener_(listener) {}
+
+  void LogCodeObjects();
+  void LogBytecodeHandlers();
+
+  void LogCompiledFunctions();
+  void LogExistingFunction(Handle<SharedFunctionInfo> shared,
+                                    Handle<AbstractCode> code);
+  void LogCodeObject(Object* object);
+  void LogBytecodeHandler(interpreter::Bytecode bytecode,
+                          interpreter::OperandScale operand_scale, Code* code);
+
+ private:
+  Isolate* isolate_;
+  CodeEventListener* listener_;
+};
+
 class Logger : public CodeEventListener {
  public:
   enum StartEnd { START = 0, END = 1, STAMP = 2 };
@@ -333,6 +353,8 @@ class Logger : public CodeEventListener {
   // 'true' between SetUp() and TearDown().
   bool is_initialized_;
 
+  CollectExistingCode collect_existing_code_;
+
   base::ElapsedTimer timer_;
 
   friend class CpuProfiler;
@@ -434,16 +456,11 @@ class ExternalCodeEventListener : public CodeEventLogger {
                          int length) override;
 
   void LogExistingCode();
-  void LogCodeObjects();
-  void LogCodeObject(Object* object);
-  void LogBytecodeHandlers();
-  void LogCompiledFunctions();
-  void LogExistingFunction(Handle<SharedFunctionInfo> shared,
-                                   Handle<AbstractCode> code);
 
   bool is_listening_;
   Isolate* isolate_;
   CodeEventHandler* code_event_handler_;
+  CollectExistingCode collect_existing_code_;
 };
 
 
