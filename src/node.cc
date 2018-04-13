@@ -1558,16 +1558,12 @@ void EnablePerfBasicProf(const FunctionCallbackInfo<Value>& args) {
   auto isolate = args.GetIsolate();
   lala = v8::CodeEventListener::New(isolate);
   lala->SetCodeEventHandler(&MyCodeEventHandler);
-  std::cout << "vamo que vamo" << std::endl;
   lala->StartListening();
-  // isolate->EnablePerfBasicProf();
 }
 
 
 void DisablePerfBasicProf(const FunctionCallbackInfo<Value>& args) {
   lala->Dispose();
-  // auto isolate = args.GetIsolate();
-  // isolate->DisablePerfBasicProf();
 }
 
 

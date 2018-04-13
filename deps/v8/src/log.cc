@@ -248,7 +248,7 @@ void CodeEventLogger::RegExpCodeCreateEvent(AbstractCode* code,
 // Linux perf tool logging support
 class PerfBasicLogger : public CodeEventLogger {
  public:
-  PerfBasicLogger(Isolate* isolate, Logger::LogExistingCode log_existing_code);
+  PerfBasicLogger();
   ~PerfBasicLogger() override;
 
   void CodeMoveEvent(AbstractCode* from, Address to) override {}
@@ -268,16 +268,13 @@ class PerfBasicLogger : public CodeEventLogger {
   static const int kFilenameBufferPadding;
 
   FILE* perf_output_handle_;
-  Isolate* isolate_;
-  bool enabled_ = false;
 };
 
 const char PerfBasicLogger::kFilenameFormatString[] = "/tmp/perf-%d.map";
 // Extra space for the PID in the filename
 const int PerfBasicLogger::kFilenameBufferPadding = 16;
 
-PerfBasicLogger::PerfBasicLogger(Isolate* isolate, Logger::LogExistingCode log_existing_code)
-    : perf_output_handle_(nullptr), isolate_(isolate), enabled_(FLAG_perf_basic_prof) {
+PerfBasicLogger::PerfBasicLogger() : perf_output_handle_(nullptr) {
   // Open the perf JIT dump file.
   int bufferSize = sizeof(kFilenameFormatString) + kFilenameBufferPadding;
   ScopedVector<char> perf_dump_name(bufferSize);
@@ -310,7 +307,6 @@ void PerfBasicLogger::WriteLogRecordedBuffer(uintptr_t address, int size,
   base::OS::FPrint(perf_output_handle_, "%" V8PRIxPTR " %x %.*s\n", address,
                    size, name_length, name);
 }
-
 
 void PerfBasicLogger::LogRecordedBuffer(AbstractCode* code, SharedFunctionInfo*,
                                         const char* name, int length) {
@@ -525,9 +521,7 @@ void ExternalCodeEventListener::LogRecordedBuffer(AbstractCode* code, SharedFunc
   // code_event.code_size = ;
   // code_event.name = ;
 
-  std::cout << "trying to handle " << name << std::endl;
   (*code_event_handler_)(code_event);
-  std::cout << "handled " << name << std::endl;
 }
 
 void ExternalCodeEventListener::LogRecordedBuffer(const wasm::WasmCode* code,
@@ -2094,44 +2088,6 @@ static void PrepareLogFileName(std::ostream& os,  // NOLINT
 }
 
 
-void Logger::SetPerfBasicProf(LogExistingCode log_existing_code) {
-  if(perf_basic_logger_) {
-    return;
-  }
-  perf_basic_logger_ = new PerfBasicLogger(isolate_, log_existing_code);
-  addCodeEventListener(perf_basic_logger_);
-}
-
-
-void Logger::EnablePerfBasicProf() {
-  if(perf_basic_logger_) {
-    return;
-  }
-  perf_basic_logger_ = new PerfBasicLogger(
-      isolate_, LogExistingCode::kLogExistingCode);
-  addCodeEventListener(perf_basic_logger_);
-}
-
-void Logger::DisablePerfBasicProf() {
-  if(!perf_basic_logger_) {
-    return;
-  }
-  UnsetPerfBasicProf();
-}
-
-bool Logger::IsEnabledPerfBasicProf() {
-  return perf_basic_logger_ != nullptr;
-}
-
-void Logger::UnsetPerfBasicProf() {
-  if (perf_basic_logger_) {
-    removeCodeEventListener(perf_basic_logger_);
-    delete perf_basic_logger_;
-    perf_basic_logger_ = nullptr;
-  }
-}
-
-
 bool Logger::SetUp(Isolate* isolate) {
   // Tests and EnsureInitialize() can call this twice in a row. It's harmless.
   if (is_initialized_) return true;
@@ -2143,7 +2099,8 @@ bool Logger::SetUp(Isolate* isolate) {
   log_ = new Log(this, log_file_name.str().c_str());
 
   if (FLAG_perf_basic_prof) {
-    SetPerfBasicProf(LogExistingCode::kDontLogExistingCode);
+    perf_basic_logger_ = new PerfBasicLogger();
+    addCodeEventListener(perf_basic_logger_);
   }
 
   if (FLAG_perf_prof) {
@@ -2231,7 +2188,11 @@ FILE* Logger::TearDown() {
   delete ticker_;
   ticker_ = nullptr;
 
-  UnsetPerfBasicProf();
+  if (perf_basic_logger_) {
+    removeCodeEventListener(perf_basic_logger_);
+    delete perf_basic_logger_;
+    perf_basic_logger_ = nullptr;
+  }
 
   if (perf_jit_logger_) {
     removeCodeEventListener(perf_jit_logger_);

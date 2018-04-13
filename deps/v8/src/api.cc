@@ -8308,6 +8308,7 @@ Isolate* Isolate::GetCurrent() {
   return reinterpret_cast<Isolate*>(isolate);
 }
 
+
 Isolate* Isolate::New(const Isolate::CreateParams& params) {
   i::Isolate* isolate = new i::Isolate(false);
   return IsolateNewImpl(isolate, params);
