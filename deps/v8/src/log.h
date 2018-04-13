@@ -445,13 +445,13 @@ class ExternalCodeEventListener : public CodeEventLogger {
   void LogRecordedBuffer(const wasm::WasmCode* code, const char* name,
                          int length) override;
 
-  // void LogExistingCode();
-  // void LogCodeObjects();
-  // void LogCodeObject(Object* object);
-  // void LogBytecodeHandlers();
-  // void LogCompiledFunctions();
-  // void LogExistingFunction(Handle<SharedFunctionInfo> shared,
-  //                                  Handle<AbstractCode> code);
+  void LogExistingCode();
+  void LogCodeObjects();
+  void LogCodeObject(Object* object);
+  void LogBytecodeHandlers();
+  void LogCompiledFunctions();
+  void LogExistingFunction(Handle<SharedFunctionInfo> shared,
+                                   Handle<AbstractCode> code);
 
   bool is_listening_;
   Isolate* isolate_;

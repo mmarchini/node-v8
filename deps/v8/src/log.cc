@@ -263,14 +263,6 @@ class PerfBasicLogger : public CodeEventLogger {
   void WriteLogRecordedBuffer(uintptr_t address, int size, const char* name,
                               int name_length);
 
-  void LogExistingCode();
-  void LogCodeObjects();
-  void LogCodeObject(Object* object);
-  void LogBytecodeHandlers();
-  void LogCompiledFunctions();
-  void LogExistingFunction(Handle<SharedFunctionInfo> shared,
-                                   Handle<AbstractCode> code);
-
   // Extension added to V8 log file name to get the low-level log name.
   static const char kFilenameFormatString[];
   static const int kFilenameBufferPadding;
@@ -298,9 +290,6 @@ PerfBasicLogger::PerfBasicLogger(Isolate* isolate, Logger::LogExistingCode log_e
       base::OS::FOpen(perf_dump_name.start(), base::OS::LogFileOpenMode);
   CHECK_NOT_NULL(perf_output_handle_);
   setvbuf(perf_output_handle_, nullptr, _IOLBF, 0);
-  if (log_existing_code == Logger::LogExistingCode::kLogExistingCode) {
-    LogExistingCode();
-  }
 }
 
 
@@ -323,7 +312,27 @@ void PerfBasicLogger::WriteLogRecordedBuffer(uintptr_t address, int size,
 }
 
 
-void PerfBasicLogger::LogCodeObject(Object* object) {
+void PerfBasicLogger::LogRecordedBuffer(AbstractCode* code, SharedFunctionInfo*,
+                                        const char* name, int length) {
+  if (FLAG_perf_basic_prof_only_functions &&
+      (code->kind() != AbstractCode::INTERPRETED_FUNCTION &&
+       code->kind() != AbstractCode::OPTIMIZED_FUNCTION)) {
+    return;
+  }
+
+  WriteLogRecordedBuffer(reinterpret_cast<uintptr_t>(code->InstructionStart()),
+                         code->InstructionSize(), name, length);
+}
+
+void PerfBasicLogger::LogRecordedBuffer(const wasm::WasmCode* code,
+                                        const char* name, int length) {
+  WriteLogRecordedBuffer(
+      reinterpret_cast<uintptr_t>(code->instructions().start()),
+      code->instructions().length(), name, length);
+}
+
+// External CodeEventListener
+void ExternalCodeEventListener::LogCodeObject(Object* object) {
   AbstractCode* code_object = AbstractCode::cast(object);
   CodeEventListener::LogEventsAndTags tag = CodeEventListener::STUB_TAG;
   const char* description = "Unknown code from before profiling";
@@ -376,7 +385,7 @@ void PerfBasicLogger::LogCodeObject(Object* object) {
 }
 
 
-void PerfBasicLogger::LogCodeObjects() {
+void ExternalCodeEventListener::LogCodeObjects() {
   Heap* heap = isolate_->heap();
   HeapIterator iterator(heap);
   DisallowHeapAllocation no_gc;
@@ -387,7 +396,7 @@ void PerfBasicLogger::LogCodeObjects() {
   }
 }
 
-void PerfBasicLogger::LogCompiledFunctions() {
+void ExternalCodeEventListener::LogCompiledFunctions() {
   Heap* heap = isolate_->heap();
   HandleScope scope(isolate_);
   const int compiled_funcs_count =
@@ -413,14 +422,14 @@ void PerfBasicLogger::LogCompiledFunctions() {
 }
 
 
-void PerfBasicLogger::LogExistingCode() {
+void ExternalCodeEventListener::LogExistingCode() {
   HandleScope scope(isolate_);
   LogCodeObjects();
   LogCompiledFunctions();
 }
 
 
-void PerfBasicLogger::LogExistingFunction(Handle<SharedFunctionInfo> shared,
+void ExternalCodeEventListener::LogExistingFunction(Handle<SharedFunctionInfo> shared,
                                  Handle<AbstractCode> code) {
    if (shared->script()->IsScript()) {
     Handle<Script> script(Script::cast(shared->script()));
@@ -465,27 +474,6 @@ void PerfBasicLogger::LogExistingFunction(Handle<SharedFunctionInfo> shared,
   }
 }
 
-
-void PerfBasicLogger::LogRecordedBuffer(AbstractCode* code, SharedFunctionInfo*,
-                                        const char* name, int length) {
-  if (FLAG_perf_basic_prof_only_functions &&
-      (code->kind() != AbstractCode::INTERPRETED_FUNCTION &&
-       code->kind() != AbstractCode::OPTIMIZED_FUNCTION)) {
-    return;
-  }
-
-  WriteLogRecordedBuffer(reinterpret_cast<uintptr_t>(code->InstructionStart()),
-                         code->InstructionSize(), name, length);
-}
-
-void PerfBasicLogger::LogRecordedBuffer(const wasm::WasmCode* code,
-                                        const char* name, int length) {
-  WriteLogRecordedBuffer(
-      reinterpret_cast<uintptr_t>(code->instructions().start()),
-      code->instructions().length(), name, length);
-}
-
-// External CodeEventListener
 ExternalCodeEventListener::ExternalCodeEventListener(Isolate* isolate)
     : is_listening_(false), isolate_(isolate), code_event_handler_(nullptr) {}
 
