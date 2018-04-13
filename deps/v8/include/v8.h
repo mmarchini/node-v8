@@ -7464,11 +7464,6 @@ class V8_EXPORT Isolate {
    */
   bool IsExecutionTerminating();
 
-  void EnablePerfBasicProf();
-  void DisablePerfBasicProf();
-  bool IsEnabledPerfBasicProf();
-
-
   /**
    * Resume execution capability in the given isolate, whose execution
    * was previously forcefully terminated using TerminateExecution().

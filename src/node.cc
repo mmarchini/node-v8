@@ -1571,12 +1571,6 @@ void DisablePerfBasicProf(const FunctionCallbackInfo<Value>& args) {
 }
 
 
-void IsEnabledPerfBasicProf(const FunctionCallbackInfo<Value>& args) {
-  auto isolate = args.GetIsolate();
-  args.GetReturnValue().Set(isolate->IsEnabledPerfBasicProf());
-}
-
-
 NO_RETURN void Abort() {
   DumpBacktrace(stderr);
   fflush(stderr);
@@ -3264,7 +3258,6 @@ void SetupProcessObject(Environment* env,
 
   env->SetMethod(process, "enablePerfBasicProf", EnablePerfBasicProf);
   env->SetMethod(process, "disablePerfBasicProf", DisablePerfBasicProf);
-  env->SetMethod(process, "isEnabledPerfBasicProf", IsEnabledPerfBasicProf);
 
   env->SetMethod(process, "reallyExit", Exit);
   env->SetMethod(process, "abort", Abort);
