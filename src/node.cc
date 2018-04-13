@@ -1549,8 +1549,16 @@ void GetActiveHandles(const FunctionCallbackInfo<Value>& args) {
 static v8::CodeEventListener* lala = nullptr;
 
 
-void MyCodeEventHandler(const v8::CodeEvent& code_event) {
-  std::cout << "VAMO DALE  " << code_event.name << std::endl;
+void MyCodeEventHandler(v8::CodeEvent* code_event) {
+  char function_name[1000], script_name[1000];
+  code_event->GetFunctionName()->WriteUtf8(function_name, 1000);
+  code_event->GetScriptName()->WriteUtf8(script_name, 1000);
+  std::cout << code_event->GetCodeType() << "{" << code_event->GetComment() << "}"
+            << "  " << function_name << "  "
+            << script_name << " " << std::dec << code_event->GetScriptLine() << ":"
+            << code_event->GetScriptColumn() << "  " << std::hex
+            << code_event->GetCodeStartAddress()
+            << "[" << code_event->GetCodeSize() << "]" << std::endl;
 }
 
 

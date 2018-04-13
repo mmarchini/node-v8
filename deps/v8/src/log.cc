@@ -69,12 +69,6 @@ static const char* ComputeMarker(const wasm::WasmCode* code) {
   }
 }
 
-class EnumerateOptimizedFunctionsVisito;
-static int EnumerateCompiledFunctions(Heap* heap, Handle<SharedFunctionInfo>* sfis,
-                                      Handle<AbstractCode>* code_objects);
-static int EnumerateWasmModules(Heap* heap,
-                                Handle<WasmCompiledModule>* modules);
-
 class CodeEventLogger::NameBuffer {
  public:
   NameBuffer() { Reset(); }
@@ -371,29 +365,101 @@ void ExternalCodeEventListener::SetCodeEventHandler(
   code_event_handler_ = code_event_handler;
 }
 
-void ExternalCodeEventListener::LogRecordedBuffer(AbstractCode* code, SharedFunctionInfo* shared,
-                                        const char* name, int) {
-  // Handle<Script> script = shared->script();
-  // int line_num = Script::GetLineNumber(script, shared->StartPosition()) + 1;
-  // int column_num = Script::GetColumnNumber(script, shared->StartPosition()) + 1;
-  // String* script_name = script->name()->IsString()
-  //                           ? String::cast(script->name())
-                            // : isolate->heap()->empty_string();
+void ExternalCodeEventListener::CodeCreateEvent(CodeEventListener::LogEventsAndTags tag,
+                                      AbstractCode* code, const char* comment) {
   CodeEvent code_event {
     reinterpret_cast<uintptr_t>(code->InstructionStart()),
     static_cast<size_t>(code->InstructionSize()),
-    name
+    Handle<String>(isolate_->heap()->empty_string(), isolate_),
+    Handle<String>(isolate_->heap()->empty_string(), isolate_),
+    0,
+    0,
+    kLogEventsNames[tag],
+    comment
   };
-  // code_event.code_start_address = ;
-  // code_event.code_size = ;
-  // code_event.name = ;
 
-  (*code_event_handler_)(code_event);
+  (*code_event_handler_)(reinterpret_cast<v8::CodeEvent*>(&code_event));
 }
 
-void ExternalCodeEventListener::LogRecordedBuffer(const wasm::WasmCode* code,
-                                        const char* name, int length) {
-  std::cout << "Logging wasm code " << name << std::endl;
+void ExternalCodeEventListener::CodeCreateEvent(CodeEventListener::LogEventsAndTags tag,
+                                      AbstractCode* code, Name* name) {
+  Handle<String> name_string = Name::ToFunctionName(Handle<Name>(name, isolate_)).ToHandleChecked();
+
+  CodeEvent code_event {
+    reinterpret_cast<uintptr_t>(code->InstructionStart()),
+    static_cast<size_t>(code->InstructionSize()),
+    name_string,
+    Handle<String>(isolate_->heap()->empty_string(), isolate_),
+    0,
+    0,
+    kLogEventsNames[tag],
+    ""
+  };
+
+  (*code_event_handler_)(reinterpret_cast<v8::CodeEvent*>(&code_event));
+}
+
+void ExternalCodeEventListener::CodeCreateEvent(CodeEventListener::LogEventsAndTags tag,
+                                      AbstractCode* code,
+                                      SharedFunctionInfo* shared, Name* name) {
+  Handle<String> name_string = Name::ToFunctionName(Handle<Name>(name, isolate_)).ToHandleChecked();
+
+
+  CodeEvent code_event {
+    reinterpret_cast<uintptr_t>(code->InstructionStart()),
+    static_cast<size_t>(code->InstructionSize()),
+    name_string,
+    Handle<String>(isolate_->heap()->empty_string(), isolate_),
+    0,
+    0,
+    kLogEventsNames[tag],
+    ""
+  };
+
+  (*code_event_handler_)(reinterpret_cast<v8::CodeEvent*>(&code_event));
+}
+
+void ExternalCodeEventListener::CodeCreateEvent(CodeEventListener::LogEventsAndTags tag,
+                                      AbstractCode* code,
+                                      SharedFunctionInfo* shared, Name* source,
+                                      int line, int column) {
+  Handle<String> name_string = Name::ToFunctionName(Handle<Name>(shared->Name(), isolate_)).ToHandleChecked();
+  Handle<String> source_string = Name::ToFunctionName(Handle<Name>(source, isolate_)).ToHandleChecked();
+
+  CodeEvent code_event {
+    reinterpret_cast<uintptr_t>(code->InstructionStart()),
+    static_cast<size_t>(code->InstructionSize()),
+    name_string,
+    source_string,
+    line,
+    column,
+    kLogEventsNames[tag],
+    ""
+  };
+
+  (*code_event_handler_)(reinterpret_cast<v8::CodeEvent*>(&code_event));
+}
+
+void ExternalCodeEventListener::CodeCreateEvent(LogEventsAndTags tag,
+                                      const wasm::WasmCode* code,
+                                      wasm::WasmName name) {
+  // TODO(mmarchini): handle later
+}
+
+void ExternalCodeEventListener::RegExpCodeCreateEvent(AbstractCode* code,
+                                            String* source) {
+  CodeEvent code_event {
+    reinterpret_cast<uintptr_t>(code->InstructionStart()),
+    static_cast<size_t>(code->InstructionSize()),
+    Handle<String>(source, isolate_),
+    Handle<String>(isolate_->heap()->empty_string(), isolate_),
+    0,
+    0,
+    kLogEventsNames[CodeEventListener::REG_EXP_TAG],
+    ""
+  };
+
+  (*code_event_handler_)(reinterpret_cast<v8::CodeEvent*>(&code_event));
 }
 
 // Low-level logging support.

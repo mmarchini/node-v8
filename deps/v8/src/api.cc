@@ -10201,6 +10201,40 @@ void CpuProfiler::SetIdle(bool is_idle) {
 }
 
 
+uintptr_t CodeEvent::GetCodeStartAddress() {
+  return reinterpret_cast<i::CodeEvent*>(this)->code_start_address;
+}
+
+
+size_t CodeEvent::GetCodeSize() {
+  return reinterpret_cast<i::CodeEvent*>(this)->code_size;
+}
+
+Local<String> CodeEvent::GetFunctionName() {
+  return ToApiHandle<String>(reinterpret_cast<i::CodeEvent*>(this)->function_name);
+}
+
+Local<String> CodeEvent::GetScriptName() {
+  return ToApiHandle<String>(reinterpret_cast<i::CodeEvent*>(this)->script_name);
+}
+
+int CodeEvent::GetScriptLine() {
+  return reinterpret_cast<i::CodeEvent*>(this)->script_line;
+}
+
+int CodeEvent::GetScriptColumn() {
+  return reinterpret_cast<i::CodeEvent*>(this)->script_column;
+}
+
+const char* CodeEvent::GetCodeType() {
+  return reinterpret_cast<i::CodeEvent*>(this)->code_type;
+}
+
+const char* CodeEvent::GetComment() {
+  return reinterpret_cast<i::CodeEvent*>(this)->comment;
+}
+
+
 CodeEventListener* CodeEventListener::New(Isolate* isolate) {
   return reinterpret_cast<CodeEventListener*>(
       new i::ExternalCodeEventListener(reinterpret_cast<i::Isolate*>(isolate)));

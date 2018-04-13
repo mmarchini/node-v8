@@ -435,14 +435,46 @@ class CodeEventLogger : public CodeEventListener {
   NameBuffer* name_buffer_;
 };
 
-class ExternalCodeEventListener : public CodeEventLogger {
+struct CodeEvent {
+  uintptr_t code_start_address;
+  size_t code_size;
+  Handle<String> function_name;
+  Handle<String> script_name;
+  int script_line;
+  int script_column;
+  const char* code_type;
+  const char* comment;
+};
+
+
+class ExternalCodeEventListener : public CodeEventListener {
  public:
   ExternalCodeEventListener(Isolate* isolate);
   ~ExternalCodeEventListener() override;
 
+  void CodeCreateEvent(LogEventsAndTags tag, AbstractCode* code,
+                       const char* comment) override;
+  void CodeCreateEvent(LogEventsAndTags tag, AbstractCode* code,
+                       Name* name) override;
+  void CodeCreateEvent(LogEventsAndTags tag, AbstractCode* code,
+                       SharedFunctionInfo* shared, Name* name) override;
+  void CodeCreateEvent(LogEventsAndTags tag, AbstractCode* code,
+                       SharedFunctionInfo* shared, Name* source, int line,
+                       int column) override;
+  void CodeCreateEvent(LogEventsAndTags tag, const wasm::WasmCode* code,
+                       wasm::WasmName name) override;
+
+  void RegExpCodeCreateEvent(AbstractCode* code, String* source) override;
+  void CallbackEvent(Name* name, Address entry_point) override {}
+  void GetterCallbackEvent(Name* name, Address entry_point) override {}
+  void SetterCallbackEvent(Name* name, Address entry_point) override {}
+  void SharedFunctionInfoMoveEvent(Address from, Address to) override {}
   void CodeMoveEvent(AbstractCode* from, Address to) override {}
   void CodeDisableOptEvent(AbstractCode* code,
                            SharedFunctionInfo* shared) override {}
+  void CodeMovingGCEvent() override {}
+  void CodeDeoptEvent(Code* code, DeoptKind kind, Address pc,
+                      int fp_to_sp_delta) override {}
 
   void StartListening();
   void StopListening();
@@ -450,11 +482,6 @@ class ExternalCodeEventListener : public CodeEventLogger {
   void SetCodeEventHandler(CodeEventHandler* code_event_handler);
 
  private:
-  void LogRecordedBuffer(AbstractCode* code, SharedFunctionInfo* shared,
-                         const char* name, int length) override;
-  void LogRecordedBuffer(const wasm::WasmCode* code, const char* name,
-                         int length) override;
-
   void LogExistingCode();
 
   bool is_listening_;

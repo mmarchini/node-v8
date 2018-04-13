@@ -988,17 +988,19 @@ struct HeapStatsUpdate {
   uint32_t size;  // New value of size field for the interval with this index.
 };
 
-struct V8_EXPORT CodeEvent {
-  uintptr_t code_start_address;
-  size_t code_size;
-  const char* name;
-  // std::string function_name();
-  // std::string script_name();
-  // int script_line;
-  // int script_column;
+class V8_EXPORT CodeEvent {
+ public:
+  uintptr_t GetCodeStartAddress();
+  size_t GetCodeSize();
+  Local<String> GetFunctionName();
+  Local<String> GetScriptName();
+  int GetScriptLine();
+  int GetScriptColumn();
+  const char* GetCodeType();
+  const char* GetComment();
 };
 
-typedef void (CodeEventHandler)(const CodeEvent& code_event);
+typedef void (CodeEventHandler)(CodeEvent* code_event);
 
 class V8_EXPORT CodeEventListener {
  public:
