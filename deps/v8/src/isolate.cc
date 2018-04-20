@@ -3312,6 +3312,19 @@ CodeTracer* Isolate::GetCodeTracer() {
   return code_tracer();
 }
 
+bool Isolate::AddCodeEventListener(ExternalCodeEventListener* code_event_listener) {
+  bool is_listening = code_event_dispatcher()->AddListener(code_event_listener);
+  if (is_listening) {
+    code_event_listener_count_++;
+  }
+  return is_listening;
+}
+
+void Isolate::RemoveCodeEventListener(ExternalCodeEventListener* code_event_listener) {
+  code_event_dispatcher()->RemoveListener(code_event_listener);
+  code_event_listener_count_--;
+}
+
 bool Isolate::use_optimizer() {
   return FLAG_opt && !serializer_enabled_ && CpuFeatures::SupportsOptimizer() &&
          !is_precise_count_code_coverage() && !is_block_count_code_coverage();

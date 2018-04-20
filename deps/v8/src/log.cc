@@ -342,21 +342,19 @@ void ExternalCodeEventListener::LogExistingCode() {
 
 void ExternalCodeEventListener::StartListening() {
   if (is_listening_ || code_event_handler_ == nullptr) {
-    std::cout << "already listening " << std::endl;
     return;
   }
-  std::cout << "start listening " << std::endl;
-  is_listening_ = isolate_->code_event_dispatcher()->AddListener(this);
-  LogExistingCode();
+  is_listening_ = isolate_->AddCodeEventListener(this);
+  if (is_listening_) {
+    LogExistingCode();
+  }
 }
 
 void ExternalCodeEventListener::StopListening() {
   if (!is_listening_) {
-    std::cout << "not listening " << std::endl;
     return;
   }
-  std::cout << "stop listening " << std::endl;
-  isolate_->code_event_dispatcher()->RemoveListener(this);
+  isolate_->RemoveCodeEventListener(this);
   is_listening_ = false;
 }
 

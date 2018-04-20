@@ -55,6 +55,7 @@ class BuiltinsConstantsTableBuilder;
 class CallInterfaceDescriptorData;
 class CancelableTaskManager;
 class CodeEventDispatcher;
+class ExternalCodeEventListener;
 class CodeGenerator;
 class CodeRange;
 class CodeStubDescriptor;
@@ -893,9 +894,10 @@ class Isolate {
     DCHECK_NOT_NULL(logger_);
     return logger_;
   }
+  bool AddCodeEventListener(ExternalCodeEventListener* code_event_listener);
+  void RemoveCodeEventListener(ExternalCodeEventListener* code_event_listener);
   bool has_code_event_listener() {
-    // TODO (mmarchini): track code event listeners life
-    return true;
+    return code_event_listener_count_ > 0;
   }
   StackGuard* stack_guard() { return &stack_guard_; }
   Heap* heap() { return &heap_; }
@@ -1589,6 +1591,7 @@ class Isolate {
   CpuProfiler* cpu_profiler_;
   HeapProfiler* heap_profiler_;
   std::unique_ptr<CodeEventDispatcher> code_event_dispatcher_;
+  unsigned int code_event_listener_count_ = 0;
   FunctionEntryHook function_entry_hook_;
 
   const AstStringConstants* ast_string_constants_;
